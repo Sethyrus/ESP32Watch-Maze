@@ -60,6 +60,13 @@ typedef struct {
 } maze_ball_t;
 
 typedef struct {
+    float x0;
+    float y0;
+    float x1;
+    float y1;
+} maze_rect_t;
+
+typedef struct {
     lv_obj_t *root;
     lv_obj_t *status_label;
     lv_obj_t *ball_obj;
@@ -711,6 +718,187 @@ static float cell_bottom(int row)
     return (float)(row + 1) * s_app.cell_h;
 }
 
+static bool clip_rect_to_screen(maze_rect_t *rect)
+{
+    rect->x0 = clamp_float(rect->x0, 0.0f, (float)s_app.screen_w);
+    rect->y0 = clamp_float(rect->y0, 0.0f, (float)s_app.screen_h);
+    rect->x1 = clamp_float(rect->x1, 0.0f, (float)s_app.screen_w);
+    rect->y1 = clamp_float(rect->y1, 0.0f, (float)s_app.screen_h);
+
+    return rect->x1 > rect->x0 && rect->y1 > rect->y0;
+}
+
+static bool make_invalid_cell_rect(int row, int col, maze_rect_t *rect)
+{
+    if (row < 0 || row >= s_app.rows || col < 0 || col >= s_app.cols || cell_valid(row, col)) {
+        return false;
+    }
+
+    rect->x0 = cell_left(col);
+    rect->y0 = cell_top(row);
+    rect->x1 = cell_right(col);
+    rect->y1 = cell_bottom(row);
+    return clip_rect_to_screen(rect);
+}
+
+static bool make_wall_rect(int row, int col, uint8_t wall, maze_rect_t *rect)
+{
+    if (!cell_valid(row, col) || (cell_at(row, col)->walls & wall) == 0) {
+        return false;
+    }
+
+    const float wall_half = wall_half_px();
+    const float x0 = cell_left(col);
+    const float y0 = cell_top(row);
+    const float x1 = cell_right(col);
+    const float y1 = cell_bottom(row);
+
+    switch (wall) {
+    case MAZE_WALL_TOP:
+        rect->x0 = x0 - wall_half;
+        rect->y0 = y0 - wall_half;
+        rect->x1 = x1 + wall_half;
+        rect->y1 = y0 + wall_half;
+        break;
+    case MAZE_WALL_LEFT:
+        rect->x0 = x0 - wall_half;
+        rect->y0 = y0 - wall_half;
+        rect->x1 = x0 + wall_half;
+        rect->y1 = y1 + wall_half;
+        break;
+    case MAZE_WALL_BOTTOM:
+        if (row != s_app.rows - 1 && cell_valid(row + 1, col)) {
+            return false;
+        }
+        rect->x0 = x0 - wall_half;
+        rect->y0 = y1 - wall_half;
+        rect->x1 = x1 + wall_half;
+        rect->y1 = y1 + wall_half;
+        break;
+    case MAZE_WALL_RIGHT:
+        if (col != s_app.cols - 1 && cell_valid(row, col + 1)) {
+            return false;
+        }
+        rect->x0 = x1 - wall_half;
+        rect->y0 = y0 - wall_half;
+        rect->x1 = x1 + wall_half;
+        rect->y1 = y1 + wall_half;
+        break;
+    default:
+        return false;
+    }
+
+    return clip_rect_to_screen(rect);
+}
+
+static bool depenetrate_rect(float *x, float *y, const maze_rect_t *rect)
+{
+    const float radius = s_app.ball.radius;
+    const bool center_inside = *x >= rect->x0 && *x <= rect->x1 && *y >= rect->y0 && *y <= rect->y1;
+    float normal_x = 0.0f;
+    float normal_y = 0.0f;
+    float push = 0.0f;
+
+    if (center_inside) {
+        const float left = *x - rect->x0;
+        const float right = rect->x1 - *x;
+        const float top = *y - rect->y0;
+        const float bottom = rect->y1 - *y;
+        float min_dist = left;
+        normal_x = -1.0f;
+        normal_y = 0.0f;
+        push = radius + left;
+
+        if (right < min_dist) {
+            min_dist = right;
+            normal_x = 1.0f;
+            normal_y = 0.0f;
+            push = radius + right;
+        }
+        if (top < min_dist) {
+            min_dist = top;
+            normal_x = 0.0f;
+            normal_y = -1.0f;
+            push = radius + top;
+        }
+        if (bottom < min_dist) {
+            normal_x = 0.0f;
+            normal_y = 1.0f;
+            push = radius + bottom;
+        }
+    } else {
+        const float closest_x = clamp_float(*x, rect->x0, rect->x1);
+        const float closest_y = clamp_float(*y, rect->y0, rect->y1);
+        const float dx = *x - closest_x;
+        const float dy = *y - closest_y;
+        const float dist_sq = dx * dx + dy * dy;
+        const float radius_sq = radius * radius;
+
+        if (dist_sq >= radius_sq || dist_sq <= 0.0001f) {
+            return false;
+        }
+
+        const float dist = sqrtf(dist_sq);
+        normal_x = dx / dist;
+        normal_y = dy / dist;
+        push = radius - dist;
+    }
+
+    *x += normal_x * push;
+    *y += normal_y * push;
+
+    const float entering_velocity = s_app.ball.vx * normal_x + s_app.ball.vy * normal_y;
+    if (entering_velocity < 0.0f) {
+        s_app.ball.vx -= entering_velocity * normal_x;
+        s_app.ball.vy -= entering_velocity * normal_y;
+    }
+
+    return true;
+}
+
+static void depenetrate_nearby_walls(float *x, float *y)
+{
+    const float radius = s_app.ball.radius;
+    const float wall_half = wall_half_px();
+    const float reach = radius + wall_half + 2.0f;
+
+    for (int iter = 0; iter < 3; ++iter) {
+        bool moved = false;
+        const int min_col = clamp_int((int)floorf((*x - reach) / s_app.cell_w) - 1, 0, s_app.cols - 1);
+        const int max_col = clamp_int((int)floorf((*x + reach) / s_app.cell_w) + 1, 0, s_app.cols - 1);
+        const int min_row = clamp_int((int)floorf((*y - reach) / s_app.cell_h) - 1, 0, s_app.rows - 1);
+        const int max_row = clamp_int((int)floorf((*y + reach) / s_app.cell_h) + 1, 0, s_app.rows - 1);
+
+        for (int row = min_row; row <= max_row; ++row) {
+            for (int col = min_col; col <= max_col; ++col) {
+                maze_rect_t rect = {0};
+
+                if (make_invalid_cell_rect(row, col, &rect)) {
+                    moved |= depenetrate_rect(x, y, &rect);
+                    continue;
+                }
+
+                const uint8_t walls[] = {
+                    MAZE_WALL_TOP,
+                    MAZE_WALL_LEFT,
+                    MAZE_WALL_BOTTOM,
+                    MAZE_WALL_RIGHT,
+                };
+
+                for (size_t i = 0; i < sizeof(walls) / sizeof(walls[0]); ++i) {
+                    if (make_wall_rect(row, col, walls[i], &rect)) {
+                        moved |= depenetrate_rect(x, y, &rect);
+                    }
+                }
+            }
+        }
+
+        if (!moved) {
+            break;
+        }
+    }
+}
+
 static void resolve_collision(float target_x, float target_y, float *out_x, float *out_y)
 {
     const float radius = s_app.ball.radius;
@@ -777,6 +965,20 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
         }
     }
 
+    resolved_y = clamp_float(resolved_y, radius + wall_half,
+                             (float)s_app.screen_h - radius - wall_half);
+
+    if (!point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
+        resolved_x = current_x;
+        resolved_y = current_y;
+        s_app.ball.vx *= 0.2f;
+        s_app.ball.vy *= 0.2f;
+    }
+
+    depenetrate_nearby_walls(&resolved_x, &resolved_y);
+
+    resolved_x = clamp_float(resolved_x, radius + wall_half,
+                             (float)s_app.screen_w - radius - wall_half);
     resolved_y = clamp_float(resolved_y, radius + wall_half,
                              (float)s_app.screen_h - radius - wall_half);
 
