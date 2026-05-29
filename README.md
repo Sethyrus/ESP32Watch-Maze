@@ -41,6 +41,7 @@ Si el shell no encuentra `idf.py`, falta ejecutar el `source` anterior o el ento
 - `docs/SETUP.md`: entorno ESP-IDF y flujo de build/flash.
 - `docs/GOTCHAS.md`: problemas conocidos y decisiones criticas.
 - `docs/ARCHITECTURE.md`: arquitectura base y criterio Brookesia vs LVGL+BSP.
+- `docs/MAZE_DESIGN.md`: diseno del juego de laberinto en la rama `app/maze`.
 - `docs/BRINGUP.md`: checklist de validacion hardware antes de construir apps.
 - `docs/SOURCES.md`: fuentes oficiales, datasheets, componentes y ejemplos usados.
 - `AGENTS.md`: instrucciones resumidas para agentes.

@@ -86,6 +86,7 @@ Usarlos solo como referencia secundaria para comportamiento de hardware, no como
 | `/Users/alex/Proyectos/Alex/ESP32/ESP32-S3-Touch-AMOLED-2.06/examples/ESP-IDF-v5.4.2/05_Spec_Analyzer/` | Referencia local audio capture ES7210 + FFT sobre BSP. |
 | `/Users/alex/Proyectos/Alex/ESP32/ESP32-S3-Touch-AMOLED-2.06/examples/ESP-IDF-v5.4.2/06_videoplayer/` | Referencia local SD + AVI + audio playback. |
 | `/Users/alex/Proyectos/Alex/ESP32/MyESP32S3Watch/LEARNINGS_AND_GUIDE.md` | Lecciones Brookesia, QMI8658, LVGL performance y registro estatico. |
+| `/Users/alex/Proyectos/Alex/ESP32/MyESP32S3Watch/components/apps/app_gyro_games/` | Referencia local de juego con IMU, laberinto, render LVGL y modo grande. |
 | `/Users/alex/Proyectos/Alex/ESP32/MyESP32S3Watch/POKETCH_DESIGN.md` | Diseno Poketch y decision de motor LVGL ligero. |
 | `managed_components/waveshare__esp32_s3_touch_amoled_2_06/` | Codigo BSP resuelto localmente tras build. Generado, no editar. |
 | `managed_components/waveshare__esp_lcd_sh8601/` | Driver panel SH8601 resuelto; confirma QSPI, comando `0x51` y restricciones de area. |
@@ -101,6 +102,7 @@ La wiki, el repo oficial, el esquematico local, el BSP resuelto y el proyecto pr
 | `docs/GOTCHAS.md` | Recovery, flash, PWR, bateria, SD GPIO17, ES7210 scan, LVGL, BSP caveats. |
 | `docs/SETUP.md` | Setup ESP-IDF, particiones, dependencias y ejemplos oficiales. |
 | `docs/BRINGUP.md` | Checklist de validacion hardware. |
+| `docs/MAZE_DESIGN.md` | Diseno del juego de laberinto, generacion, colisiones, IMU y rendimiento. |
 
 ## Notas De Fiabilidad De Fuentes
 

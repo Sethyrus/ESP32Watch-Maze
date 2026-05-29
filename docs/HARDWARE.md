@@ -130,6 +130,8 @@ Antes de desarrollar drivers propios para RTC/PMU/audio, conviene hacer un I2C s
 Datos validados:
 
 - Resolucion BSP: `BSP_LCD_H_RES=410`, `BSP_LCD_V_RES=502`.
+- Area visible segun dimensiones Waveshare: `33.09 mm x 40.51 mm`.
+- Esquinas visibles segun dimensiones Waveshare: `R9.2 mm`, equivalente a unos `114 px` en `410 x 502`.
 - Brillo maximo anunciado: 600 nit.
 - Bus: QSPI por `SPI2_HOST`.
 - Formato BSP: RGB565, `LV_COLOR_FORMAT_RGB565` en LVGL 9.
