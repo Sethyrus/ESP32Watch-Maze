@@ -149,6 +149,20 @@ static int round_to_int(float value)
     return (int)(value + (value >= 0.0f ? 0.5f : -0.5f));
 }
 
+static int wall_thickness_px(void)
+{
+    int thickness = clamp_int(round_to_int(s_app.wall_thickness), 2, 4);
+    if ((thickness & 1) != 0) {
+        ++thickness;
+    }
+    return thickness;
+}
+
+static float wall_half_px(void)
+{
+    return (float)wall_thickness_px() * 0.5f;
+}
+
 static uint32_t maze_rand_u32(void)
 {
     uint32_t x = s_app.rng;
@@ -551,9 +565,14 @@ static bool generate_maze(void)
     s_app.cell_w = (float)s_app.screen_w / (float)s_app.cols;
     s_app.cell_h = (float)s_app.screen_h / (float)s_app.rows;
     s_app.cell_size = fminf(s_app.cell_w, s_app.cell_h);
-    s_app.wall_thickness = clamp_float(s_app.cell_size * 0.08f, 2.0f, 5.0f);
-    s_app.ball_radius = s_app.cell_size * cfg->ball_radius_factor;
-    s_app.hole_radius = s_app.ball_radius * 1.10f;
+    s_app.wall_thickness = (float)clamp_int(round_to_int(s_app.cell_size * 0.08f), 2, 4);
+    if (((int)s_app.wall_thickness & 1) != 0) {
+        s_app.wall_thickness += 1.0f;
+    }
+
+    const int ball_diameter = round_to_int(s_app.cell_size * cfg->ball_radius_factor * 2.0f);
+    s_app.ball_radius = (float)ball_diameter * 0.5f;
+    s_app.hole_radius = (float)round_to_int(s_app.ball_radius * 2.2f) * 0.5f;
 
     for (int attempt = 0; attempt < 24; ++attempt) {
         s_app.seed = esp_random();
@@ -590,9 +609,22 @@ static bool generate_maze(void)
 
 static lv_obj_t *create_rect(lv_obj_t *parent, int x, int y, int w, int h, lv_color_t color)
 {
+    if (w <= 0 || h <= 0) {
+        return NULL;
+    }
+
+    const int x0 = clamp_int(x, 0, s_app.screen_w);
+    const int y0 = clamp_int(y, 0, s_app.screen_h);
+    const int x1 = clamp_int(x + w, 0, s_app.screen_w);
+    const int y1 = clamp_int(y + h, 0, s_app.screen_h);
+
+    if (x1 <= x0 || y1 <= y0) {
+        return NULL;
+    }
+
     lv_obj_t *obj = lv_obj_create(parent);
-    lv_obj_set_pos(obj, x, y);
-    lv_obj_set_size(obj, w, h);
+    lv_obj_set_pos(obj, x0, y0);
+    lv_obj_set_size(obj, x1 - x0, y1 - y0);
     lv_obj_set_style_bg_color(obj, color, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN);
@@ -604,7 +636,8 @@ static lv_obj_t *create_rect(lv_obj_t *parent, int x, int y, int w, int h, lv_co
 
 static void draw_maze(lv_obj_t *parent)
 {
-    const int wall_t = clamp_int(round_to_int(s_app.wall_thickness), 2, 5);
+    const int wall_t = wall_thickness_px();
+    const int wall_before = wall_t / 2;
     const lv_color_t wall_color = lv_color_hex(0x5b3418);
     const lv_color_t invalid_color = lv_color_hex(0x070b12);
 
@@ -637,18 +670,22 @@ static void draw_maze(lv_obj_t *parent)
             }
 
             if ((cell->walls & MAZE_WALL_TOP) != 0) {
-                create_rect(parent, x0, y0, cell_w + wall_t, wall_t, wall_color);
+                create_rect(parent, x0 - wall_before, y0 - wall_before,
+                            cell_w + wall_t, wall_t, wall_color);
             }
             if ((cell->walls & MAZE_WALL_LEFT) != 0) {
-                create_rect(parent, x0, y0, wall_t, cell_h + wall_t, wall_color);
+                create_rect(parent, x0 - wall_before, y0 - wall_before,
+                            wall_t, cell_h + wall_t, wall_color);
             }
             if ((row == s_app.rows - 1 || !cell_valid(row + 1, col)) &&
                 (cell->walls & MAZE_WALL_BOTTOM) != 0) {
-                create_rect(parent, x0, y1 - wall_t, cell_w + wall_t, wall_t, wall_color);
+                create_rect(parent, x0 - wall_before, y1 - wall_before,
+                            cell_w + wall_t, wall_t, wall_color);
             }
             if ((col == s_app.cols - 1 || !cell_valid(row, col + 1)) &&
                 (cell->walls & MAZE_WALL_RIGHT) != 0) {
-                create_rect(parent, x1 - wall_t, y0, wall_t, cell_h + wall_t, wall_color);
+                create_rect(parent, x1 - wall_before, y0 - wall_before,
+                            wall_t, cell_h + wall_t, wall_color);
             }
         }
     }
@@ -677,6 +714,7 @@ static float cell_bottom(int row)
 static void resolve_collision(float target_x, float target_y, float *out_x, float *out_y)
 {
     const float radius = s_app.ball.radius;
+    const float wall_half = wall_half_px();
     float current_x = s_app.ball.x;
     float current_y = s_app.ball.y;
     float resolved_x = target_x;
@@ -685,22 +723,22 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
     int col = clamp_int((int)floorf(current_x / s_app.cell_w), 0, s_app.cols - 1);
 
     if (target_x > current_x) {
-        for (int guard = 0; guard < 4 && resolved_x + radius > cell_right(col); ++guard) {
+        for (int guard = 0; guard < 4 && resolved_x + radius > cell_right(col) - wall_half; ++guard) {
             const bool blocked = !cell_valid(row, col) || !cell_valid(row, col + 1) ||
                                  ((cell_at(row, col)->walls & MAZE_WALL_RIGHT) != 0);
             if (blocked) {
-                resolved_x = cell_right(col) - radius;
+                resolved_x = cell_right(col) - radius - wall_half;
                 s_app.ball.vx = -s_app.ball.vx * 0.08f;
                 break;
             }
             ++col;
         }
     } else if (target_x < current_x) {
-        for (int guard = 0; guard < 4 && resolved_x - radius < cell_left(col); ++guard) {
+        for (int guard = 0; guard < 4 && resolved_x - radius < cell_left(col) + wall_half; ++guard) {
             const bool blocked = !cell_valid(row, col) || !cell_valid(row, col - 1) ||
                                  ((cell_at(row, col)->walls & MAZE_WALL_LEFT) != 0);
             if (blocked) {
-                resolved_x = cell_left(col) + radius;
+                resolved_x = cell_left(col) + radius + wall_half;
                 s_app.ball.vx = -s_app.ball.vx * 0.08f;
                 break;
             }
@@ -708,29 +746,30 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
         }
     }
 
-    resolved_x = clamp_float(resolved_x, radius, (float)s_app.screen_w - radius);
+    resolved_x = clamp_float(resolved_x, radius + wall_half,
+                             (float)s_app.screen_w - radius - wall_half);
 
     float resolved_y = target_y;
     col = clamp_int((int)floorf(resolved_x / s_app.cell_w), 0, s_app.cols - 1);
     row = clamp_int((int)floorf(current_y / s_app.cell_h), 0, s_app.rows - 1);
 
     if (target_y > current_y) {
-        for (int guard = 0; guard < 4 && resolved_y + radius > cell_bottom(row); ++guard) {
+        for (int guard = 0; guard < 4 && resolved_y + radius > cell_bottom(row) - wall_half; ++guard) {
             const bool blocked = !cell_valid(row, col) || !cell_valid(row + 1, col) ||
                                  ((cell_at(row, col)->walls & MAZE_WALL_BOTTOM) != 0);
             if (blocked) {
-                resolved_y = cell_bottom(row) - radius;
+                resolved_y = cell_bottom(row) - radius - wall_half;
                 s_app.ball.vy = -s_app.ball.vy * 0.08f;
                 break;
             }
             ++row;
         }
     } else if (target_y < current_y) {
-        for (int guard = 0; guard < 4 && resolved_y - radius < cell_top(row); ++guard) {
+        for (int guard = 0; guard < 4 && resolved_y - radius < cell_top(row) + wall_half; ++guard) {
             const bool blocked = !cell_valid(row, col) || !cell_valid(row - 1, col) ||
                                  ((cell_at(row, col)->walls & MAZE_WALL_TOP) != 0);
             if (blocked) {
-                resolved_y = cell_top(row) + radius;
+                resolved_y = cell_top(row) + radius + wall_half;
                 s_app.ball.vy = -s_app.ball.vy * 0.08f;
                 break;
             }
@@ -738,9 +777,10 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
         }
     }
 
-    resolved_y = clamp_float(resolved_y, radius, (float)s_app.screen_h - radius);
+    resolved_y = clamp_float(resolved_y, radius + wall_half,
+                             (float)s_app.screen_h - radius - wall_half);
 
-    if (!point_inside_safe_screen(resolved_x, resolved_y, radius + 1.0f)) {
+    if (!point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
         resolved_x = current_x;
         resolved_y = current_y;
         s_app.ball.vx *= 0.2f;
