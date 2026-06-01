@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -13,9 +14,12 @@
 
 static const char *TAG = "maze_game";
 
-#define MAZE_MAX_ROWS 20
-#define MAZE_MAX_COLS 20
+#define MAZE_MAX_ROWS 60
+#define MAZE_MAX_COLS 48
 #define MAZE_MAX_CELLS (MAZE_MAX_ROWS * MAZE_MAX_COLS)
+#define MAZE_ADVENTURE_VISIBLE_COLS 12
+#define MAZE_ADVENTURE_VISIBLE_ROWS 15
+#define MAZE_WALL_POOL_OBJECTS 384
 
 #define MAZE_WALL_TOP    (1U << 0)
 #define MAZE_WALL_RIGHT  (1U << 1)
@@ -28,6 +32,11 @@ typedef enum {
     MAZE_DIFFICULTY_NORMAL,
     MAZE_DIFFICULTY_HARD,
 } maze_difficulty_t;
+
+typedef enum {
+    MAZE_MODE_NORMAL = 0,
+    MAZE_MODE_ADVENTURE,
+} maze_mode_t;
 
 typedef enum {
     MAZE_CORNER_TOP_LEFT = 0,
@@ -70,10 +79,19 @@ typedef struct {
     lv_obj_t *root;
     lv_obj_t *status_label;
     lv_obj_t *ball_obj;
+    lv_obj_t *hole_obj;
     lv_obj_t *overlay;
+    lv_obj_t *board_obj;
+    lv_obj_t *world_layer;
+    lv_obj_t *floor_obj;
+    lv_obj_t *hint_checkbox;
+    lv_obj_t *hint_box;
+    lv_obj_t *hint_arrow;
     lv_timer_t *timer;
     int screen_w;
     int screen_h;
+    int visible_cols;
+    int visible_rows;
     int cols;
     int rows;
     int start_col;
@@ -83,19 +101,41 @@ typedef struct {
     float cell_w;
     float cell_h;
     float cell_size;
+    float world_w;
+    float world_h;
     float wall_thickness;
     float ball_radius;
     float hole_radius;
+    float camera_x;
+    float camera_y;
     maze_ball_t ball;
+    maze_mode_t mode;
     maze_difficulty_t difficulty;
     uint32_t seed;
     uint32_t rng;
     uint32_t last_tick_ms;
+    int render_start_row;
+    int render_start_col;
+    int render_end_row;
+    int render_end_col;
+    int active_wall_count;
+    int wall_pool_index;
+    int last_world_offset_x;
+    int last_world_offset_y;
     bool playing;
+    bool hint_enabled;
+    bool hole_hidden;
     maze_cell_t cells[MAZE_MAX_ROWS][MAZE_MAX_COLS];
+    int16_t work_rows[MAZE_MAX_CELLS];
+    int16_t work_cols[MAZE_MAX_CELLS];
+    int16_t work_queue[MAZE_MAX_CELLS];
+    int16_t work_distance[MAZE_MAX_CELLS];
+    lv_obj_t *wall_pool[MAZE_WALL_POOL_OBJECTS];
+    maze_rect_t wall_world_rects[MAZE_WALL_POOL_OBJECTS];
+    lv_point_precise_t hint_points[5];
 } maze_app_t;
 
-static const maze_difficulty_config_t DIFFICULTIES[] = {
+static const maze_difficulty_config_t NORMAL_DIFFICULTIES[] = {
     [MAZE_DIFFICULTY_EASY] = {
         .name = "Facil",
         .cols = 9,
@@ -122,12 +162,54 @@ static const maze_difficulty_config_t DIFFICULTIES[] = {
     },
 };
 
+static const maze_difficulty_config_t ADVENTURE_DIFFICULTIES[] = {
+    [MAZE_DIFFICULTY_EASY] = {
+        .name = "Facil",
+        .cols = 24,
+        .rows = 30,
+        .ball_radius_factor = 0.28f,
+        .branch_select_percent = 15,
+        .min_solution_ratio = 0.70f,
+    },
+    [MAZE_DIFFICULTY_NORMAL] = {
+        .name = "Normal",
+        .cols = 36,
+        .rows = 45,
+        .ball_radius_factor = 0.28f,
+        .branch_select_percent = 25,
+        .min_solution_ratio = 0.85f,
+    },
+    [MAZE_DIFFICULTY_HARD] = {
+        .name = "Dificil",
+        .cols = 48,
+        .rows = 60,
+        .ball_radius_factor = 0.28f,
+        .branch_select_percent = 35,
+        .min_solution_ratio = 1.00f,
+    },
+};
+
 static maze_app_t s_app;
 
 static void show_mode_menu(void);
 static void show_difficulty_menu(void);
 static void start_game(maze_difficulty_t difficulty);
 static void show_victory(void);
+static float cell_left(int col);
+static float cell_right(int col);
+static float cell_top(int row);
+static float cell_bottom(int row);
+
+static const maze_difficulty_config_t *current_difficulty_config(void)
+{
+    return s_app.mode == MAZE_MODE_ADVENTURE ? &ADVENTURE_DIFFICULTIES[s_app.difficulty]
+                                             : &NORMAL_DIFFICULTIES[s_app.difficulty];
+}
+
+static const char *current_mode_name(void)
+{
+    return s_app.mode == MAZE_MODE_ADVENTURE ? "Aventura" : "Normal";
+}
 
 static int clamp_int(int value, int min_value, int max_value)
 {
@@ -215,8 +297,27 @@ static void clear_screen(void)
     stop_timer();
 
     s_app.ball_obj = NULL;
+    s_app.hole_obj = NULL;
     s_app.overlay = NULL;
+    s_app.board_obj = NULL;
+    s_app.world_layer = NULL;
+    s_app.floor_obj = NULL;
     s_app.status_label = NULL;
+    s_app.hint_checkbox = NULL;
+    s_app.hint_box = NULL;
+    s_app.hint_arrow = NULL;
+    s_app.active_wall_count = 0;
+    s_app.wall_pool_index = 0;
+    s_app.render_start_row = -1;
+    s_app.render_start_col = -1;
+    s_app.render_end_row = -1;
+    s_app.render_end_col = -1;
+    s_app.last_world_offset_x = INT32_MIN;
+    s_app.last_world_offset_y = INT32_MIN;
+    s_app.hole_hidden = false;
+    for (int i = 0; i < MAZE_WALL_POOL_OBJECTS; ++i) {
+        s_app.wall_pool[i] = NULL;
+    }
 
     lv_obj_t *screen = lv_screen_active();
     s_app.root = screen;
@@ -372,6 +473,40 @@ static bool find_corner_cell(maze_corner_t corner, int *out_row, int *out_col)
     return false;
 }
 
+static bool find_center_cell(int *out_row, int *out_col)
+{
+    const int center_row = s_app.rows / 2;
+    const int center_col = s_app.cols / 2;
+
+    for (int dist = 0; dist < s_app.rows + s_app.cols; ++dist) {
+        int chosen_row = -1;
+        int chosen_col = -1;
+        int count = 0;
+
+        for (int row = 0; row < s_app.rows; ++row) {
+            for (int col = 0; col < s_app.cols; ++col) {
+                if (!cell_valid(row, col) || abs(row - center_row) + abs(col - center_col) != dist) {
+                    continue;
+                }
+
+                ++count;
+                if (maze_rand_range(count) == 0) {
+                    chosen_row = row;
+                    chosen_col = col;
+                }
+            }
+        }
+
+        if (count > 0) {
+            *out_row = chosen_row;
+            *out_col = chosen_col;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static uint8_t wall_for_dir(int dir)
 {
     static const uint8_t walls[] = {
@@ -404,13 +539,13 @@ static void step_for_dir(int dir, int *dr, int *dc)
 
 static void carve_maze(const maze_difficulty_config_t *cfg)
 {
-    int active_rows[MAZE_MAX_CELLS];
-    int active_cols[MAZE_MAX_CELLS];
+    int16_t *active_rows = s_app.work_rows;
+    int16_t *active_cols = s_app.work_cols;
     int active_count = 0;
 
     cell_at(s_app.start_row, s_app.start_col)->visited = true;
-    active_rows[active_count] = s_app.start_row;
-    active_cols[active_count] = s_app.start_col;
+    active_rows[active_count] = (int16_t)s_app.start_row;
+    active_cols[active_count] = (int16_t)s_app.start_col;
     ++active_count;
 
     while (active_count > 0) {
@@ -450,8 +585,8 @@ static void carve_maze(const maze_difficulty_config_t *cfg)
         cell_at(nr, nc)->walls &= (uint8_t)~opposite_wall_for_dir(dir);
         cell_at(nr, nc)->visited = true;
 
-        active_rows[active_count] = nr;
-        active_cols[active_count] = nc;
+        active_rows[active_count] = (int16_t)nr;
+        active_cols[active_count] = (int16_t)nc;
         ++active_count;
     }
 }
@@ -476,8 +611,8 @@ static bool can_move_between(int row, int col, int dir)
 
 static bool validate_maze(const maze_difficulty_config_t *cfg, int *out_solution_len, int *out_dead_ends)
 {
-    int queue[MAZE_MAX_CELLS];
-    int distance[MAZE_MAX_CELLS];
+    int16_t *queue = s_app.work_queue;
+    int16_t *distance = s_app.work_distance;
     int valid_count = 0;
     int reached_count = 0;
     int dead_ends = 0;
@@ -509,7 +644,7 @@ static bool validate_maze(const maze_difficulty_config_t *cfg, int *out_solution
     const int goal_index = s_app.goal_row * s_app.cols + s_app.goal_col;
     int head = 0;
     int tail = 0;
-    queue[tail++] = start_index;
+    queue[tail++] = (int16_t)start_index;
     distance[start_index] = 0;
 
     while (head < tail) {
@@ -533,12 +668,14 @@ static bool validate_maze(const maze_difficulty_config_t *cfg, int *out_solution
                 continue;
             }
             distance[next_index] = distance[index] + 1;
-            queue[tail++] = next_index;
+            queue[tail++] = (int16_t)next_index;
         }
     }
 
     const int solution_len = distance[goal_index];
-    const int min_solution = (int)((float)valid_count * cfg->min_solution_ratio);
+    const int min_solution = s_app.mode == MAZE_MODE_ADVENTURE
+                                 ? (int)((float)(s_app.rows + s_app.cols) * cfg->min_solution_ratio)
+                                 : (int)((float)valid_count * cfg->min_solution_ratio);
     const int min_dead_ends = valid_count / 8;
 
     if (out_solution_len != NULL) {
@@ -558,7 +695,7 @@ static void init_cells(void)
         for (int col = 0; col < s_app.cols; ++col) {
             maze_cell_t *cell = cell_at(row, col);
             cell->walls = MAZE_ALL_WALLS;
-            cell->valid = cell_inside_safe_screen(row, col);
+            cell->valid = s_app.mode == MAZE_MODE_ADVENTURE || cell_inside_safe_screen(row, col);
             cell->visited = false;
         }
     }
@@ -566,12 +703,16 @@ static void init_cells(void)
 
 static bool generate_maze(void)
 {
-    const maze_difficulty_config_t *cfg = &DIFFICULTIES[s_app.difficulty];
+    const maze_difficulty_config_t *cfg = current_difficulty_config();
     s_app.cols = cfg->cols;
     s_app.rows = cfg->rows;
-    s_app.cell_w = (float)s_app.screen_w / (float)s_app.cols;
-    s_app.cell_h = (float)s_app.screen_h / (float)s_app.rows;
+    s_app.visible_cols = s_app.mode == MAZE_MODE_ADVENTURE ? MAZE_ADVENTURE_VISIBLE_COLS : s_app.cols;
+    s_app.visible_rows = s_app.mode == MAZE_MODE_ADVENTURE ? MAZE_ADVENTURE_VISIBLE_ROWS : s_app.rows;
+    s_app.cell_w = (float)s_app.screen_w / (float)s_app.visible_cols;
+    s_app.cell_h = (float)s_app.screen_h / (float)s_app.visible_rows;
     s_app.cell_size = fminf(s_app.cell_w, s_app.cell_h);
+    s_app.world_w = s_app.cell_w * (float)s_app.cols;
+    s_app.world_h = s_app.cell_h * (float)s_app.rows;
     s_app.wall_thickness = (float)clamp_int(round_to_int(s_app.cell_size * 0.08f), 2, 4);
     if (((int)s_app.wall_thickness & 1) != 0) {
         s_app.wall_thickness += 1.0f;
@@ -581,7 +722,7 @@ static bool generate_maze(void)
     s_app.ball_radius = (float)ball_diameter * 0.5f;
     s_app.hole_radius = (float)round_to_int(s_app.ball_radius * 2.2f) * 0.5f;
 
-    for (int attempt = 0; attempt < 24; ++attempt) {
+    for (int attempt = 0; attempt < 48; ++attempt) {
         s_app.seed = esp_random();
         if (s_app.seed == 0) {
             s_app.seed = 0x8badf00dU;
@@ -590,11 +731,19 @@ static bool generate_maze(void)
 
         init_cells();
 
-        const maze_corner_t start_corner = (maze_corner_t)maze_rand_range(4);
-        const maze_corner_t goal_corner = opposite_corner(start_corner);
-        if (!find_corner_cell(start_corner, &s_app.start_row, &s_app.start_col) ||
-            !find_corner_cell(goal_corner, &s_app.goal_row, &s_app.goal_col)) {
-            continue;
+        if (s_app.mode == MAZE_MODE_ADVENTURE) {
+            const maze_corner_t goal_corner = (maze_corner_t)maze_rand_range(4);
+            if (!find_center_cell(&s_app.start_row, &s_app.start_col) ||
+                !find_corner_cell(goal_corner, &s_app.goal_row, &s_app.goal_col)) {
+                continue;
+            }
+        } else {
+            const maze_corner_t start_corner = (maze_corner_t)maze_rand_range(4);
+            const maze_corner_t goal_corner = opposite_corner(start_corner);
+            if (!find_corner_cell(start_corner, &s_app.start_row, &s_app.start_col) ||
+                !find_corner_cell(goal_corner, &s_app.goal_row, &s_app.goal_col)) {
+                continue;
+            }
         }
 
         carve_maze(cfg);
@@ -603,11 +752,12 @@ static bool generate_maze(void)
         int dead_ends = 0;
         const bool valid = validate_maze(cfg, &solution_len, &dead_ends);
         ESP_LOGI(TAG,
-                 "maze attempt=%d diff=%s seed=%" PRIu32 " start=(%d,%d) goal=(%d,%d) path=%d dead=%d valid=%d",
-                 attempt + 1, cfg->name, s_app.seed, s_app.start_row, s_app.start_col,
-                 s_app.goal_row, s_app.goal_col, solution_len, dead_ends, valid);
-        if (valid || attempt == 23) {
-            return solution_len >= 0;
+                 "maze attempt=%d mode=%s diff=%s size=%dx%d seed=%" PRIu32 " start=(%d,%d) goal=(%d,%d) path=%d dead=%d valid=%d",
+                 attempt + 1, current_mode_name(), cfg->name, s_app.cols, s_app.rows, s_app.seed,
+                 s_app.start_row, s_app.start_col, s_app.goal_row, s_app.goal_col, solution_len,
+                 dead_ends, valid);
+        if (valid) {
+            return true;
         }
     }
 
@@ -698,6 +848,299 @@ static void draw_maze(lv_obj_t *parent)
     }
 }
 
+static void configure_existing_rect(lv_obj_t *obj, int x, int y, int w, int h)
+{
+    if (obj == NULL) {
+        return;
+    }
+    if (w <= 0 || h <= 0) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_set_pos(obj, x, y);
+    lv_obj_set_size(obj, w, h);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void position_adventure_rect(lv_obj_t *obj, const maze_rect_t *rect)
+{
+    const int x0 = round_to_int(rect->x0 - s_app.camera_x);
+    const int y0 = round_to_int(rect->y0 - s_app.camera_y);
+    const int x1 = round_to_int(rect->x1 - s_app.camera_x);
+    const int y1 = round_to_int(rect->y1 - s_app.camera_y);
+    configure_existing_rect(obj, x0, y0, x1 - x0, y1 - y0);
+}
+
+static void update_adventure_floor(void)
+{
+    if (s_app.floor_obj == NULL) {
+        return;
+    }
+
+    const float x0 = fmaxf(0.0f, s_app.camera_x);
+    const float y0 = fmaxf(0.0f, s_app.camera_y);
+    const float x1 = fminf(s_app.world_w, s_app.camera_x + (float)s_app.screen_w);
+    const float y1 = fminf(s_app.world_h, s_app.camera_y + (float)s_app.screen_h);
+
+    if (x1 <= x0 || y1 <= y0) {
+        lv_obj_add_flag(s_app.floor_obj, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    maze_rect_t floor_rect = {
+        .x0 = x0,
+        .y0 = y0,
+        .x1 = x1,
+        .y1 = y1,
+    };
+    position_adventure_rect(s_app.floor_obj, &floor_rect);
+}
+
+static void update_adventure_wall_positions(void)
+{
+    for (int i = 0; i < s_app.active_wall_count; ++i) {
+        position_adventure_rect(s_app.wall_pool[i], &s_app.wall_world_rects[i]);
+    }
+}
+
+static void create_adventure_wall_pool(lv_obj_t *parent)
+{
+    const lv_color_t wall_color = lv_color_hex(0x5b3418);
+
+    s_app.wall_pool_index = 0;
+    s_app.active_wall_count = 0;
+    for (int i = 0; i < MAZE_WALL_POOL_OBJECTS; ++i) {
+        lv_obj_t *wall = lv_obj_create(parent);
+        lv_obj_set_style_bg_color(wall, wall_color, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(wall, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(wall, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(wall, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(wall, 0, LV_PART_MAIN);
+        lv_obj_clear_flag(wall, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(wall, LV_OBJ_FLAG_HIDDEN);
+        s_app.wall_pool[i] = wall;
+    }
+}
+
+static void add_adventure_wall_rect(float x0, float y0, float x1, float y1)
+{
+    if (s_app.wall_pool_index >= MAZE_WALL_POOL_OBJECTS) {
+        ESP_LOGW(TAG, "Adventure wall pool exhausted");
+        return;
+    }
+
+    maze_rect_t rect = {
+        .x0 = clamp_float(x0, 0.0f, s_app.world_w),
+        .y0 = clamp_float(y0, 0.0f, s_app.world_h),
+        .x1 = clamp_float(x1, 0.0f, s_app.world_w),
+        .y1 = clamp_float(y1, 0.0f, s_app.world_h),
+    };
+    if (rect.x1 <= rect.x0 || rect.y1 <= rect.y0) {
+        return;
+    }
+
+    const int index = s_app.wall_pool_index++;
+    s_app.wall_world_rects[index] = rect;
+    position_adventure_rect(s_app.wall_pool[index], &rect);
+}
+
+static void update_adventure_camera(void)
+{
+    s_app.camera_x = s_app.ball.x - (float)s_app.screen_w * 0.5f;
+    s_app.camera_y = s_app.ball.y - (float)s_app.screen_h * 0.5f;
+}
+
+static bool adventure_has_top_wall(int row, int col)
+{
+    return cell_valid(row, col) && (cell_at(row, col)->walls & MAZE_WALL_TOP) != 0;
+}
+
+static bool adventure_has_left_wall(int row, int col)
+{
+    return cell_valid(row, col) && (cell_at(row, col)->walls & MAZE_WALL_LEFT) != 0;
+}
+
+static bool adventure_has_bottom_wall(int row, int col)
+{
+    return row == s_app.rows - 1 && cell_valid(row, col) &&
+           (cell_at(row, col)->walls & MAZE_WALL_BOTTOM) != 0;
+}
+
+static bool adventure_has_right_wall(int row, int col)
+{
+    return col == s_app.cols - 1 && cell_valid(row, col) &&
+           (cell_at(row, col)->walls & MAZE_WALL_RIGHT) != 0;
+}
+
+static void add_adventure_horizontal_segments(int row, int start_col, int end_col, bool bottom)
+{
+    const float wall_half = wall_half_px();
+    const float y = bottom ? cell_bottom(row) : cell_top(row);
+    int col = start_col;
+
+    while (col < end_col) {
+        const bool has_wall = bottom ? adventure_has_bottom_wall(row, col)
+                                     : adventure_has_top_wall(row, col);
+        if (!has_wall) {
+            ++col;
+            continue;
+        }
+
+        const int seg_start = col;
+        do {
+            ++col;
+        } while (col < end_col &&
+                 (bottom ? adventure_has_bottom_wall(row, col)
+                         : adventure_has_top_wall(row, col)));
+
+        add_adventure_wall_rect(cell_left(seg_start) - wall_half, y - wall_half,
+                                cell_right(col - 1) + wall_half, y + wall_half);
+    }
+}
+
+static void add_adventure_vertical_segments(int col, int start_row, int end_row, bool right)
+{
+    const float wall_half = wall_half_px();
+    const float x = right ? cell_right(col) : cell_left(col);
+    int row = start_row;
+
+    while (row < end_row) {
+        const bool has_wall = right ? adventure_has_right_wall(row, col)
+                                    : adventure_has_left_wall(row, col);
+        if (!has_wall) {
+            ++row;
+            continue;
+        }
+
+        const int seg_start = row;
+        do {
+            ++row;
+        } while (row < end_row &&
+                 (right ? adventure_has_right_wall(row, col)
+                        : adventure_has_left_wall(row, col)));
+
+        add_adventure_wall_rect(x - wall_half, cell_top(seg_start) - wall_half,
+                                x + wall_half, cell_bottom(row - 1) + wall_half);
+    }
+}
+
+static void draw_adventure_visible(bool force)
+{
+    const int target_start_col = clamp_int((int)floorf(s_app.camera_x / s_app.cell_w) - 1, 0, s_app.cols - 1);
+    const int target_start_row = clamp_int((int)floorf(s_app.camera_y / s_app.cell_h) - 1, 0, s_app.rows - 1);
+    const int target_end_col = clamp_int((int)floorf(((float)s_app.screen_w + s_app.camera_x) / s_app.cell_w) + 3,
+                                        target_start_col + 1, s_app.cols);
+    const int target_end_row = clamp_int((int)floorf(((float)s_app.screen_h + s_app.camera_y) / s_app.cell_h) + 3,
+                                        target_start_row + 1, s_app.rows);
+
+    if (!force && target_start_col == s_app.render_start_col &&
+        target_start_row == s_app.render_start_row && target_end_col == s_app.render_end_col &&
+        target_end_row == s_app.render_end_row) {
+        return;
+    }
+
+    s_app.render_start_col = target_start_col;
+    s_app.render_start_row = target_start_row;
+    s_app.render_end_col = target_end_col;
+    s_app.render_end_row = target_end_row;
+    const int previous_count = s_app.active_wall_count;
+    s_app.wall_pool_index = 0;
+
+    for (int row = s_app.render_start_row; row < s_app.render_end_row; ++row) {
+        add_adventure_horizontal_segments(row, s_app.render_start_col, s_app.render_end_col, false);
+        add_adventure_horizontal_segments(row, s_app.render_start_col, s_app.render_end_col, true);
+    }
+
+    for (int col = s_app.render_start_col; col < s_app.render_end_col; ++col) {
+        add_adventure_vertical_segments(col, s_app.render_start_row, s_app.render_end_row, false);
+        add_adventure_vertical_segments(col, s_app.render_start_row, s_app.render_end_row, true);
+    }
+
+    for (int i = s_app.wall_pool_index; i < previous_count; ++i) {
+        if (s_app.wall_pool[i] != NULL) {
+            lv_obj_add_flag(s_app.wall_pool[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    s_app.active_wall_count = s_app.wall_pool_index;
+}
+
+static void update_hint_arrow(void)
+{
+    if (!s_app.hint_enabled || s_app.hint_box == NULL || s_app.hint_arrow == NULL) {
+        return;
+    }
+
+    const float goal_x = ((float)s_app.goal_col + 0.5f) * s_app.cell_w;
+    const float goal_y = ((float)s_app.goal_row + 0.5f) * s_app.cell_h;
+    const float dx = goal_x - s_app.ball.x;
+    const float dy = goal_y - s_app.ball.y;
+    const float dist = sqrtf(dx * dx + dy * dy);
+
+    if (dist <= 0.001f) {
+        lv_obj_add_flag(s_app.hint_box, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    const float ux = dx / dist;
+    const float uy = dy / dist;
+    const float px = -uy;
+    const float py = ux;
+    const float center_x = 28.0f;
+    const float center_y = 28.0f;
+    const float tip_len = 20.0f;
+    const float tail_len = 12.0f;
+    const float head_len = 10.0f;
+    const float head_w = 7.0f;
+    const float tip_x = center_x + ux * tip_len;
+    const float tip_y = center_y + uy * tip_len;
+    const float tail_x = center_x - ux * tail_len;
+    const float tail_y = center_y - uy * tail_len;
+    const float head_x = tip_x - ux * head_len;
+    const float head_y = tip_y - uy * head_len;
+
+    s_app.hint_points[0].x = round_to_int(tail_x);
+    s_app.hint_points[0].y = round_to_int(tail_y);
+    s_app.hint_points[1].x = round_to_int(tip_x);
+    s_app.hint_points[1].y = round_to_int(tip_y);
+    s_app.hint_points[2].x = round_to_int(head_x + px * head_w);
+    s_app.hint_points[2].y = round_to_int(head_y + py * head_w);
+    s_app.hint_points[3].x = round_to_int(tip_x);
+    s_app.hint_points[3].y = round_to_int(tip_y);
+    s_app.hint_points[4].x = round_to_int(head_x - px * head_w);
+    s_app.hint_points[4].y = round_to_int(head_y - py * head_w);
+    lv_line_set_points_mutable(s_app.hint_arrow, s_app.hint_points, 5);
+    lv_obj_clear_flag(s_app.hint_box, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_adventure_world_transform(void)
+{
+    update_adventure_floor();
+    update_adventure_wall_positions();
+
+    if (s_app.hole_obj != NULL) {
+        const float goal_x = ((float)s_app.goal_col + 0.5f) * s_app.cell_w;
+        const float goal_y = ((float)s_app.goal_row + 0.5f) * s_app.cell_h;
+        const float hole_screen_x = goal_x - s_app.hole_radius - s_app.camera_x;
+        const float hole_screen_y = goal_y - s_app.hole_radius - s_app.camera_y;
+        const float hole_d = s_app.hole_radius * 2.0f;
+        const bool hide_hole = hole_screen_x < -hole_d || hole_screen_x > (float)s_app.screen_w ||
+                               hole_screen_y < -hole_d || hole_screen_y > (float)s_app.screen_h;
+        lv_obj_set_size(s_app.hole_obj, round_to_int(hole_d), round_to_int(hole_d));
+        lv_obj_set_pos(s_app.hole_obj, round_to_int(hole_screen_x), round_to_int(hole_screen_y));
+        if (hide_hole != s_app.hole_hidden) {
+            if (hide_hole) {
+                lv_obj_add_flag(s_app.hole_obj, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_clear_flag(s_app.hole_obj, LV_OBJ_FLAG_HIDDEN);
+            }
+            s_app.hole_hidden = hide_hole;
+        }
+    }
+
+    update_hint_arrow();
+}
+
 static float cell_left(int col)
 {
     return (float)col * s_app.cell_w;
@@ -718,12 +1161,12 @@ static float cell_bottom(int row)
     return (float)(row + 1) * s_app.cell_h;
 }
 
-static bool clip_rect_to_screen(maze_rect_t *rect)
+static bool clip_rect_to_world(maze_rect_t *rect)
 {
-    rect->x0 = clamp_float(rect->x0, 0.0f, (float)s_app.screen_w);
-    rect->y0 = clamp_float(rect->y0, 0.0f, (float)s_app.screen_h);
-    rect->x1 = clamp_float(rect->x1, 0.0f, (float)s_app.screen_w);
-    rect->y1 = clamp_float(rect->y1, 0.0f, (float)s_app.screen_h);
+    rect->x0 = clamp_float(rect->x0, 0.0f, s_app.world_w);
+    rect->y0 = clamp_float(rect->y0, 0.0f, s_app.world_h);
+    rect->x1 = clamp_float(rect->x1, 0.0f, s_app.world_w);
+    rect->y1 = clamp_float(rect->y1, 0.0f, s_app.world_h);
 
     return rect->x1 > rect->x0 && rect->y1 > rect->y0;
 }
@@ -738,7 +1181,7 @@ static bool make_invalid_cell_rect(int row, int col, maze_rect_t *rect)
     rect->y0 = cell_top(row);
     rect->x1 = cell_right(col);
     rect->y1 = cell_bottom(row);
-    return clip_rect_to_screen(rect);
+    return clip_rect_to_world(rect);
 }
 
 static bool make_wall_rect(int row, int col, uint8_t wall, maze_rect_t *rect)
@@ -788,7 +1231,7 @@ static bool make_wall_rect(int row, int col, uint8_t wall, maze_rect_t *rect)
         return false;
     }
 
-    return clip_rect_to_screen(rect);
+    return clip_rect_to_world(rect);
 }
 
 static bool depenetrate_rect(float *x, float *y, const maze_rect_t *rect)
@@ -935,7 +1378,7 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
     }
 
     resolved_x = clamp_float(resolved_x, radius + wall_half,
-                             (float)s_app.screen_w - radius - wall_half);
+                             s_app.world_w - radius - wall_half);
 
     float resolved_y = target_y;
     col = clamp_int((int)floorf(resolved_x / s_app.cell_w), 0, s_app.cols - 1);
@@ -966,9 +1409,10 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
     }
 
     resolved_y = clamp_float(resolved_y, radius + wall_half,
-                             (float)s_app.screen_h - radius - wall_half);
+                             s_app.world_h - radius - wall_half);
 
-    if (!point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
+    if (s_app.mode == MAZE_MODE_NORMAL &&
+        !point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
         resolved_x = current_x;
         resolved_y = current_y;
         s_app.ball.vx *= 0.2f;
@@ -978,11 +1422,12 @@ static void resolve_collision(float target_x, float target_y, float *out_x, floa
     depenetrate_nearby_walls(&resolved_x, &resolved_y);
 
     resolved_x = clamp_float(resolved_x, radius + wall_half,
-                             (float)s_app.screen_w - radius - wall_half);
+                             s_app.world_w - radius - wall_half);
     resolved_y = clamp_float(resolved_y, radius + wall_half,
-                             (float)s_app.screen_h - radius - wall_half);
+                             s_app.world_h - radius - wall_half);
 
-    if (!point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
+    if (s_app.mode == MAZE_MODE_NORMAL &&
+        !point_inside_safe_screen(resolved_x, resolved_y, radius + wall_half + 1.0f)) {
         resolved_x = current_x;
         resolved_y = current_y;
         s_app.ball.vx *= 0.2f;
@@ -1074,9 +1519,15 @@ static void game_timer_cb(lv_timer_t *timer)
 
     update_physics(accel.x, accel.y, (float)elapsed_ms * 0.001f);
 
-    lv_obj_set_pos(s_app.ball_obj,
-                   round_to_int(s_app.ball.x - s_app.ball.radius),
-                   round_to_int(s_app.ball.y - s_app.ball.radius));
+    if (s_app.mode == MAZE_MODE_ADVENTURE) {
+        update_adventure_camera();
+        draw_adventure_visible(false);
+        update_adventure_world_transform();
+    } else {
+        lv_obj_set_pos(s_app.ball_obj,
+                       round_to_int(s_app.ball.x - s_app.ball.radius),
+                       round_to_int(s_app.ball.y - s_app.ball.radius));
+    }
 
     if (check_win()) {
         show_victory();
@@ -1086,12 +1537,24 @@ static void game_timer_cb(lv_timer_t *timer)
 static void normal_mode_clicked(lv_event_t *event)
 {
     (void)event;
+    s_app.mode = MAZE_MODE_NORMAL;
+    s_app.hint_enabled = false;
+    show_difficulty_menu();
+}
+
+static void adventure_mode_clicked(lv_event_t *event)
+{
+    (void)event;
+    s_app.mode = MAZE_MODE_ADVENTURE;
+    s_app.hint_enabled = false;
     show_difficulty_menu();
 }
 
 static void difficulty_clicked(lv_event_t *event)
 {
     const maze_difficulty_t difficulty = (maze_difficulty_t)(intptr_t)lv_event_get_user_data(event);
+    s_app.hint_enabled = s_app.mode == MAZE_MODE_ADVENTURE && s_app.hint_checkbox != NULL &&
+                         lv_obj_has_state(s_app.hint_checkbox, LV_STATE_CHECKED);
     start_game(difficulty);
 }
 
@@ -1154,8 +1617,11 @@ static void show_mode_menu(void)
     lv_obj_set_width(s_app.status_label, s_app.screen_w - 44);
     lv_obj_align(s_app.status_label, LV_ALIGN_TOP_MID, 0, 102);
 
-    lv_obj_t *normal = create_button(s_app.root, "Modo Normal", 250, 64, normal_mode_clicked, NULL);
-    lv_obj_align(normal, LV_ALIGN_CENTER, 0, -8);
+    lv_obj_t *normal = create_button(s_app.root, "Modo Normal", 250, 58, normal_mode_clicked, NULL);
+    lv_obj_align(normal, LV_ALIGN_CENTER, 0, -46);
+
+    lv_obj_t *adventure = create_button(s_app.root, "Modo Aventura", 250, 58, adventure_mode_clicked, NULL);
+    lv_obj_align(adventure, LV_ALIGN_CENTER, 0, 28);
 
     lv_obj_t *calibrate = create_button(s_app.root, "Calibrar", 150, 46, calibrate_clicked, NULL);
     lv_obj_set_style_bg_color(calibrate, lv_color_hex(0x334155), LV_PART_MAIN);
@@ -1167,17 +1633,32 @@ static void show_difficulty_menu(void)
     clear_screen();
 
     lv_obj_t *title = lv_label_create(s_app.root);
-    lv_label_set_text(title, "Dificultad");
+    lv_label_set_text_fmt(title, "%s", current_mode_name());
     style_label(title, lv_color_hex(0xf8fafc));
 #if LV_FONT_MONTSERRAT_28
     lv_obj_set_style_text_font(title, &lv_font_montserrat_28, LV_PART_MAIN);
 #endif
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 48);
 
+    const maze_difficulty_config_t *configs = s_app.mode == MAZE_MODE_ADVENTURE ? ADVENTURE_DIFFICULTIES
+                                                                               : NORMAL_DIFFICULTIES;
     for (int i = 0; i < 3; ++i) {
-        lv_obj_t *button = create_button(s_app.root, DIFFICULTIES[i].name, 240, 58,
+        lv_obj_t *button = create_button(s_app.root, configs[i].name, 240, 58,
                                          difficulty_clicked, (void *)(intptr_t)i);
-        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, 132 + i * 76);
+        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, 116 + i * 72);
+    }
+
+    if (s_app.mode == MAZE_MODE_ADVENTURE) {
+        s_app.hint_checkbox = lv_checkbox_create(s_app.root);
+        lv_checkbox_set_text(s_app.hint_checkbox, "Pista hacia el agujero");
+        lv_obj_set_style_text_color(s_app.hint_checkbox, lv_color_hex(0xf8fafc), LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_app.hint_checkbox, lv_color_hex(0xf8fafc), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(s_app.hint_checkbox, lv_color_hex(0x0f172a), LV_PART_INDICATOR);
+        lv_obj_set_style_border_color(s_app.hint_checkbox, lv_color_hex(0x38bdf8), LV_PART_INDICATOR);
+#if LV_FONT_MONTSERRAT_16
+        lv_obj_set_style_text_font(s_app.hint_checkbox, &lv_font_montserrat_16, LV_PART_MAIN);
+#endif
+        lv_obj_align(s_app.hint_checkbox, LV_ALIGN_TOP_MID, 0, 342);
     }
 
     lv_obj_t *back = create_button(s_app.root, "Menu", 150, 44, menu_clicked, NULL);
@@ -1198,42 +1679,76 @@ static void start_game(maze_difficulty_t difficulty)
         return;
     }
 
-    lv_obj_t *board = lv_obj_create(s_app.root);
-    lv_obj_set_size(board, s_app.screen_w, s_app.screen_h);
-    lv_obj_set_pos(board, 0, 0);
-    lv_obj_set_style_bg_color(board, lv_color_hex(0xd9c29d), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(board, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(board, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(board, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(board, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(board, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-    draw_maze(board);
-
-    const float goal_x = ((float)s_app.goal_col + 0.5f) * s_app.cell_w;
-    const float goal_y = ((float)s_app.goal_row + 0.5f) * s_app.cell_h;
-    lv_obj_t *hole = lv_obj_create(s_app.root);
-    const int hole_d = round_to_int(s_app.hole_radius * 2.0f);
-    lv_obj_set_size(hole, hole_d, hole_d);
-    lv_obj_set_pos(hole, round_to_int(goal_x - s_app.hole_radius), round_to_int(goal_y - s_app.hole_radius));
-    lv_obj_set_style_bg_color(hole, lv_color_hex(0x020617), LV_PART_MAIN);
-    lv_obj_set_style_border_color(hole, lv_color_hex(0x475569), LV_PART_MAIN);
-    lv_obj_set_style_border_width(hole, 2, LV_PART_MAIN);
-    lv_obj_set_style_radius(hole, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_clear_flag(hole, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
     s_app.ball.radius = s_app.ball_radius;
     s_app.ball.x = ((float)s_app.start_col + 0.5f) * s_app.cell_w;
     s_app.ball.y = ((float)s_app.start_row + 0.5f) * s_app.cell_h;
     s_app.ball.vx = 0.0f;
     s_app.ball.vy = 0.0f;
 
+    s_app.board_obj = lv_obj_create(s_app.root);
+    lv_obj_set_size(s_app.board_obj, s_app.screen_w, s_app.screen_h);
+    lv_obj_set_pos(s_app.board_obj, 0, 0);
+    lv_obj_set_style_bg_color(s_app.board_obj,
+                              s_app.mode == MAZE_MODE_ADVENTURE ? lv_color_hex(0x070b12)
+                                                                 : lv_color_hex(0xd9c29d),
+                              LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_app.board_obj, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_app.board_obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_app.board_obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_app.board_obj, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(s_app.board_obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    if (s_app.mode == MAZE_MODE_ADVENTURE) {
+        update_adventure_camera();
+
+        s_app.floor_obj = lv_obj_create(s_app.board_obj);
+        lv_obj_set_style_bg_color(s_app.floor_obj, lv_color_hex(0xd9c29d), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_app.floor_obj, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_app.floor_obj, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(s_app.floor_obj, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(s_app.floor_obj, 0, LV_PART_MAIN);
+        lv_obj_clear_flag(s_app.floor_obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+        create_adventure_wall_pool(s_app.board_obj);
+
+        s_app.hole_obj = lv_obj_create(s_app.board_obj);
+        lv_obj_set_style_bg_color(s_app.hole_obj, lv_color_hex(0x020617), LV_PART_MAIN);
+        lv_obj_set_style_border_color(s_app.hole_obj, lv_color_hex(0x475569), LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_app.hole_obj, 2, LV_PART_MAIN);
+        lv_obj_set_style_radius(s_app.hole_obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_clear_flag(s_app.hole_obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+        draw_adventure_visible(true);
+        update_adventure_world_transform();
+    } else {
+        draw_maze(s_app.board_obj);
+
+        const float goal_x = ((float)s_app.goal_col + 0.5f) * s_app.cell_w;
+        const float goal_y = ((float)s_app.goal_row + 0.5f) * s_app.cell_h;
+        s_app.hole_obj = lv_obj_create(s_app.root);
+        const int hole_d = round_to_int(s_app.hole_radius * 2.0f);
+        lv_obj_set_size(s_app.hole_obj, hole_d, hole_d);
+        lv_obj_set_pos(s_app.hole_obj, round_to_int(goal_x - s_app.hole_radius),
+                       round_to_int(goal_y - s_app.hole_radius));
+        lv_obj_set_style_bg_color(s_app.hole_obj, lv_color_hex(0x020617), LV_PART_MAIN);
+        lv_obj_set_style_border_color(s_app.hole_obj, lv_color_hex(0x475569), LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_app.hole_obj, 2, LV_PART_MAIN);
+        lv_obj_set_style_radius(s_app.hole_obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_clear_flag(s_app.hole_obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    }
+
     s_app.ball_obj = lv_obj_create(s_app.root);
     const int ball_d = round_to_int(s_app.ball.radius * 2.0f);
     lv_obj_set_size(s_app.ball_obj, ball_d, ball_d);
-    lv_obj_set_pos(s_app.ball_obj,
-                   round_to_int(s_app.ball.x - s_app.ball.radius),
-                   round_to_int(s_app.ball.y - s_app.ball.radius));
+    if (s_app.mode == MAZE_MODE_ADVENTURE) {
+        lv_obj_set_pos(s_app.ball_obj,
+                       round_to_int((float)s_app.screen_w * 0.5f - s_app.ball.radius),
+                       round_to_int((float)s_app.screen_h * 0.5f - s_app.ball.radius));
+    } else {
+        lv_obj_set_pos(s_app.ball_obj,
+                       round_to_int(s_app.ball.x - s_app.ball.radius),
+                       round_to_int(s_app.ball.y - s_app.ball.radius));
+    }
     lv_obj_set_style_bg_color(s_app.ball_obj, lv_color_hex(0xe11d48), LV_PART_MAIN);
     lv_obj_set_style_border_color(s_app.ball_obj, lv_color_hex(0xfda4af), LV_PART_MAIN);
     lv_obj_set_style_border_width(s_app.ball_obj, 2, LV_PART_MAIN);
@@ -1241,6 +1756,28 @@ static void start_game(maze_difficulty_t difficulty)
     lv_obj_set_style_shadow_width(s_app.ball_obj, 10, LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(s_app.ball_obj, LV_OPA_30, LV_PART_MAIN);
     lv_obj_clear_flag(s_app.ball_obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    if (s_app.mode == MAZE_MODE_ADVENTURE && s_app.hint_enabled) {
+        s_app.hint_box = lv_obj_create(s_app.root);
+        lv_obj_set_size(s_app.hint_box, 56, 56);
+        lv_obj_align(s_app.hint_box, LV_ALIGN_TOP_RIGHT, -22, 22);
+        lv_obj_set_style_bg_color(s_app.hint_box, lv_color_hex(0x0f172a), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_app.hint_box, LV_OPA_60, LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_app.hint_box, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(s_app.hint_box, lv_color_hex(0x38bdf8), LV_PART_MAIN);
+        lv_obj_set_style_radius(s_app.hint_box, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(s_app.hint_box, 0, LV_PART_MAIN);
+        lv_obj_clear_flag(s_app.hint_box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+        s_app.hint_arrow = lv_line_create(s_app.hint_box);
+        lv_obj_set_size(s_app.hint_arrow, 56, 56);
+        lv_obj_set_pos(s_app.hint_arrow, 0, 0);
+        lv_obj_set_style_line_color(s_app.hint_arrow, lv_color_hex(0xf8fafc), LV_PART_MAIN);
+        lv_obj_set_style_line_width(s_app.hint_arrow, 5, LV_PART_MAIN);
+        lv_obj_set_style_line_rounded(s_app.hint_arrow, true, LV_PART_MAIN);
+        lv_obj_clear_flag(s_app.hint_arrow, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        update_hint_arrow();
+    }
 
     s_app.last_tick_ms = lv_tick_get();
     s_app.playing = true;
