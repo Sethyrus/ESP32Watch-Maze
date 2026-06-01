@@ -56,7 +56,7 @@ Estos valores vienen del `Kconfig` del BSP y conviene tratarlos como contrato pr
 | SPIFFS partition | `storage` | Debe existir en `partitions.csv`. |
 | SPIFFS max files | `2` | Cambiar en `sdkconfig.defaults` si hace falta. |
 | SD mount | `/sdcard` | Macro `BSP_SD_MOUNT_POINT`. |
-| LVGL buffer height | `100` | `CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT`. |
+| LVGL buffer height | `40` | `CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT`; reducido desde el default BSP `100` para bajar presion DMA. |
 | RGB bounce height | `20` | Kconfig heredado; el panel real va por QSPI/SH8601. |
 | I2S port | `CONFIG_BSP_I2S_NUM=1` | Audio speaker/mic. |
 
