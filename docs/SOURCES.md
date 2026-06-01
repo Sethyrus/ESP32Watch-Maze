@@ -92,6 +92,32 @@ Usarlos solo como referencia secundaria para comportamiento de hardware, no como
 | `managed_components/waveshare__esp_lcd_sh8601/` | Driver panel SH8601 resuelto; confirma QSPI, comando `0x51` y restricciones de area. |
 | `dependencies.lock` | Versiones exactas resueltas por ESP Component Manager. |
 
+## Referencias Doom
+
+| Recurso | URL | Uso |
+| --- | --- | --- |
+| Espressif `esp32-doom` | https://github.com/espressif/esp32-doom | PoC PrBoom para ESP32 original; referencia de PSRAM, WAD en particion raw, framebuffer 320x240, DMA y stubs de audio. No copiar literalmente. |
+| `doom1-cut.wad` de Espressif | https://dl.espressif.com/dl/doom1-cut.wad | WAD recortado usado por `esp32-doom`; referencia historica. No commitear ni usar sin revisar licencia/alcance. |
+| DoomGeneric | https://github.com/ozkl/doomgeneric | Base importada en `components/doomgeneric/vendor` desde commit `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284`. API minima `DG_*`. Licencia GPL-2.0. |
+| ESP32-S3 DoomGeneric port | https://github.com/Komedenden/esp32-s3-doom-port | Referencia reciente ESP-IDF para ESP32-S3 N16R8, framebuffer en PSRAM, SD, chunks DMA y 15 FPS reportados. Display/input no coinciden con esta placa. |
+| Doom source release | https://github.com/id-Software/DOOM | Fuente historica GPL-2.0 del motor Doom. |
+| Freedoom | https://freedoom.github.io/ | Assets libres compatibles con motores Doom; alternativa a WAD comercial/shareware para pruebas si tamano y compatibilidad encajan. |
+| Freedoom repo | https://github.com/freedoom/freedoom | Fuentes/licencia de assets Freedoom; licencia BSD-like segun `COPYING.adoc`. |
+| Porting Doom, Part 1 | https://actuallytaylor.com/blog/portingdoomp1 | Explicacion practica de DoomGeneric; confirma que `DG_DrawFrame()` e input son la mayor parte del trabajo de port. |
+| Guide to source ports in classic Doom | https://old.reddit.com/r/Doom/comments/r3ziow/guide_to_source_ports_in_classic_doom/ | Comparativa informal de source ports; util para descartar GZDoom/Boom avanzado en microcontrolador MVP. |
+| My easy to build Doom port | https://mattiasgustavsson.com/my-easy-to-build-doom-port/ | Referencia de filosofia minimalista: pocos cambios, build simple y fuente facil de auditar. |
+| Doomworld basic source port thread | https://www.doomworld.com/forum/topic/92065-where-to-start-on-making-a-basic-simple-doom-source-port/ | Consejos de comunidad: no empezar de cero; compilar una base existente y modificar incrementalmente. |
+| DoomWiki DoomGeneric | https://doomwiki.org/wiki/DoomGeneric | Contexto del port DoomGeneric y su objetivo de simplificar integraciones. |
+| DoomWiki source port | https://doomwiki.org/wiki/Source_port | Taxonomia de ports y alcance de compatibilidad. |
+| DoomWiki Doom source code | https://doomwiki.org/wiki/Doom_source_code | Estructura historica del codigo y subsistemas `I_*`, `W_*`, `R_*`, `P_*`, `Z_*`. |
+| DoomWiki WAD | https://doomwiki.org/wiki/WAD | Formato de assets WAD y contexto de IWAD/PWAD. |
+| DoomWiki static limits | https://doomwiki.org/wiki/Static_limits | Limites vanilla relevantes para evitar WADs/mods complejos en MVP. |
+| DoomWiki Chocolate Doom | https://doomwiki.org/wiki/Chocolate_Doom | Referencia de port conservador/vanilla; util como filosofia, no como base inicial. |
+| DoomWiki PrBoom+ | https://doomwiki.org/wiki/PrBoom%2B | Contexto de PrBoom/PrBoom+ frente a `esp32-doom`; mayor superficie que DoomGeneric. |
+| DoomWiki Crispy Doom | https://doomwiki.org/wiki/Crispy_Doom | Port conservador extendido; referencia, no objetivo de MVP. |
+| DoomWiki GZDoom | https://doomwiki.org/wiki/GZDoom | Port moderno orientado a PC/modding; fuera de alcance para ESP32-S3 MVP. |
+| Retro-Go | https://github.com/ducalex/retro-go | Referencia de firmware de emulacion/juegos en ESP32; demasiado amplio para el primer port standalone. |
+
 ## Informacion Ya Sintetizada
 
 La wiki, el repo oficial, el esquematico local, el BSP resuelto y el proyecto previo fueron usados para extraer datos a estos documentos:
@@ -103,6 +129,7 @@ La wiki, el repo oficial, el esquematico local, el BSP resuelto y el proyecto pr
 | `docs/SETUP.md` | Setup ESP-IDF, particiones, dependencias y ejemplos oficiales. |
 | `docs/BRINGUP.md` | Checklist de validacion hardware. |
 | `docs/MAZE_DESIGN.md` | Diseno del juego de laberinto, generacion, colisiones, IMU y rendimiento. |
+| `docs/DOOM_PORT.md` | Investigacion inicial de Doom, repos evaluados, arquitectura, estado de implementacion, fases, riesgos y decisiones. |
 
 ## Notas De Fiabilidad De Fuentes
 
