@@ -50,9 +50,15 @@ esp_err_t imu_service_init(void)
         return err;
     }
 
-    (void)qmi8658_set_accel_range(&s_dev, QMI8658_ACCEL_RANGE_8G);
-    (void)qmi8658_set_accel_odr(&s_dev, QMI8658_ACCEL_ODR_500HZ);
-    (void)qmi8658_set_accel_unit_mps2(&s_dev, false);
+    err = qmi8658_set_accel_range(&s_dev, QMI8658_ACCEL_RANGE_8G);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "QMI8658 accel range config failed: %s", esp_err_to_name(err));
+    }
+    err = qmi8658_set_accel_odr(&s_dev, QMI8658_ACCEL_ODR_500HZ);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "QMI8658 accel ODR config failed: %s", esp_err_to_name(err));
+    }
+    qmi8658_set_accel_unit_mps2(&s_dev, false);
 
     s_available = true;
     s_initialized = true;

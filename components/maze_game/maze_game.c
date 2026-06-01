@@ -941,13 +941,21 @@ static void configure_existing_rect(lv_obj_t *obj, int x, int y, int w, int h)
         return;
     }
     if (w <= 0 || h <= 0) {
-        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        if (!lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        }
         return;
     }
 
-    lv_obj_set_pos(obj, x, y);
-    lv_obj_set_size(obj, w, h);
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    if (lv_obj_get_x(obj) != x || lv_obj_get_y(obj) != y) {
+        lv_obj_set_pos(obj, x, y);
+    }
+    if (lv_obj_get_width(obj) != w || lv_obj_get_height(obj) != h) {
+        lv_obj_set_size(obj, w, h);
+    }
+    if (lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void position_adventure_rect(lv_obj_t *obj, const maze_rect_t *rect)
@@ -1211,10 +1219,18 @@ static void update_adventure_world_transform(void)
         const float hole_screen_x = goal_x - s_app.hole_radius - s_app.camera_x;
         const float hole_screen_y = goal_y - s_app.hole_radius - s_app.camera_y;
         const float hole_d = s_app.hole_radius * 2.0f;
+        const int hole_d_px = round_to_int(hole_d);
+        const int hole_x = round_to_int(hole_screen_x);
+        const int hole_y = round_to_int(hole_screen_y);
         const bool hide_hole = hole_screen_x < -hole_d || hole_screen_x > (float)s_app.screen_w ||
                                hole_screen_y < -hole_d || hole_screen_y > (float)s_app.screen_h;
-        lv_obj_set_size(s_app.hole_obj, round_to_int(hole_d), round_to_int(hole_d));
-        lv_obj_set_pos(s_app.hole_obj, round_to_int(hole_screen_x), round_to_int(hole_screen_y));
+        if (lv_obj_get_width(s_app.hole_obj) != hole_d_px ||
+            lv_obj_get_height(s_app.hole_obj) != hole_d_px) {
+            lv_obj_set_size(s_app.hole_obj, hole_d_px, hole_d_px);
+        }
+        if (lv_obj_get_x(s_app.hole_obj) != hole_x || lv_obj_get_y(s_app.hole_obj) != hole_y) {
+            lv_obj_set_pos(s_app.hole_obj, hole_x, hole_y);
+        }
         if (hide_hole != s_app.hole_hidden) {
             if (hide_hole) {
                 lv_obj_add_flag(s_app.hole_obj, LV_OBJ_FLAG_HIDDEN);
@@ -1547,12 +1563,12 @@ static void update_physics(float ax, float ay, float dt)
     steps = clamp_int(steps, 1, 5);
 
     const float step_dt = dt / (float)steps;
+    const float dt_scale = step_dt / base_dt;
+    const float frame_friction = powf(friction, dt_scale);
     for (int i = 0; i < steps; ++i) {
-        const float dt_scale = step_dt / base_dt;
         s_app.ball.vx += ax * accel_factor * step_dt;
         s_app.ball.vy += ay * accel_factor * step_dt;
 
-        const float frame_friction = powf(friction, dt_scale);
         s_app.ball.vx *= frame_friction;
         s_app.ball.vy *= frame_friction;
 
@@ -1615,9 +1631,11 @@ static void game_timer_cb(lv_timer_t *timer)
         draw_adventure_visible(false);
         update_adventure_world_transform();
     } else {
-        lv_obj_set_pos(s_app.ball_obj,
-                       round_to_int(s_app.ball.x - s_app.ball.radius),
-                       round_to_int(s_app.ball.y - s_app.ball.radius));
+        const int ball_x = round_to_int(s_app.ball.x - s_app.ball.radius);
+        const int ball_y = round_to_int(s_app.ball.y - s_app.ball.radius);
+        if (lv_obj_get_x(s_app.ball_obj) != ball_x || lv_obj_get_y(s_app.ball_obj) != ball_y) {
+            lv_obj_set_pos(s_app.ball_obj, ball_x, ball_y);
+        }
     }
 
     if (check_win()) {
@@ -2001,9 +2019,14 @@ static void start_game(maze_difficulty_t difficulty)
         update_hint_arrow();
     }
 
+    s_app.timer = lv_timer_create(game_timer_cb, 20, NULL);
+    if (s_app.timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create game timer");
+        s_app.playing = false;
+        return;
+    }
     s_app.last_tick_ms = lv_tick_get();
     s_app.playing = true;
-    s_app.timer = lv_timer_create(game_timer_cb, 20, NULL);
 }
 
 static void show_victory(void)

@@ -73,9 +73,9 @@ void app_main(void)
     err = maze_game_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start maze game: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Maze game ready");
     }
 
     bsp_display_unlock();
-
-    ESP_LOGI(TAG, "Maze game ready");
 }
