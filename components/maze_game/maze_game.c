@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "imu_service.h"
@@ -20,6 +21,10 @@ static const char *TAG = "maze_game";
 #define MAZE_ADVENTURE_VISIBLE_COLS 12
 #define MAZE_ADVENTURE_VISIBLE_ROWS 15
 #define MAZE_WALL_POOL_OBJECTS 384
+#define MAZE_BOOT_GPIO GPIO_NUM_0
+#define MAZE_BOOT_POLL_MS 25
+#define MAZE_BOOT_DEBOUNCE_MS 40
+#define MAZE_BOOT_SHORT_PRESS_MAX_MS 700
 
 #define MAZE_WALL_TOP    (1U << 0)
 #define MAZE_WALL_RIGHT  (1U << 1)
@@ -81,6 +86,9 @@ typedef struct {
     lv_obj_t *ball_obj;
     lv_obj_t *hole_obj;
     lv_obj_t *overlay;
+    lv_obj_t *pause_overlay;
+    lv_obj_t *pause_card;
+    lv_obj_t *pause_confirm_card;
     lv_obj_t *board_obj;
     lv_obj_t *world_layer;
     lv_obj_t *floor_obj;
@@ -88,6 +96,7 @@ typedef struct {
     lv_obj_t *hint_box;
     lv_obj_t *hint_arrow;
     lv_timer_t *timer;
+    lv_timer_t *boot_timer;
     int screen_w;
     int screen_h;
     int visible_cols;
@@ -123,8 +132,14 @@ typedef struct {
     int last_world_offset_x;
     int last_world_offset_y;
     bool playing;
+    bool paused;
     bool hint_enabled;
     bool hole_hidden;
+    bool boot_raw_pressed;
+    bool boot_stable_pressed;
+    bool boot_pressed_event_active;
+    uint32_t boot_last_change_ms;
+    uint32_t boot_press_start_ms;
     maze_cell_t cells[MAZE_MAX_ROWS][MAZE_MAX_COLS];
     int16_t work_rows[MAZE_MAX_CELLS];
     int16_t work_cols[MAZE_MAX_CELLS];
@@ -195,6 +210,12 @@ static void show_mode_menu(void);
 static void show_difficulty_menu(void);
 static void start_game(maze_difficulty_t difficulty);
 static void show_victory(void);
+static void show_pause_menu(void);
+static esp_err_t boot_button_init(void);
+static void resume_game_clicked(lv_event_t *event);
+static void request_exit_clicked(lv_event_t *event);
+static void cancel_exit_clicked(lv_event_t *event);
+static void confirm_exit_clicked(lv_event_t *event);
 static float cell_left(int col);
 static float cell_right(int col);
 static float cell_top(int row);
@@ -290,6 +311,7 @@ static void stop_timer(void)
         s_app.timer = NULL;
     }
     s_app.playing = false;
+    s_app.paused = false;
 }
 
 static void clear_screen(void)
@@ -299,6 +321,9 @@ static void clear_screen(void)
     s_app.ball_obj = NULL;
     s_app.hole_obj = NULL;
     s_app.overlay = NULL;
+    s_app.pause_overlay = NULL;
+    s_app.pause_card = NULL;
+    s_app.pause_confirm_card = NULL;
     s_app.board_obj = NULL;
     s_app.world_layer = NULL;
     s_app.floor_obj = NULL;
@@ -353,6 +378,68 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, int width, in
 #endif
     lv_obj_center(label);
     return button;
+}
+
+static void boot_button_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    const uint32_t now = lv_tick_get();
+    const bool pressed = gpio_get_level(MAZE_BOOT_GPIO) == 0;
+
+    if (pressed != s_app.boot_raw_pressed) {
+        s_app.boot_raw_pressed = pressed;
+        s_app.boot_last_change_ms = now;
+        return;
+    }
+
+    if (pressed == s_app.boot_stable_pressed ||
+        now - s_app.boot_last_change_ms < MAZE_BOOT_DEBOUNCE_MS) {
+        return;
+    }
+
+    s_app.boot_stable_pressed = pressed;
+    if (pressed) {
+        s_app.boot_press_start_ms = now;
+        s_app.boot_pressed_event_active = true;
+        return;
+    }
+
+    if (!s_app.boot_pressed_event_active) {
+        return;
+    }
+    s_app.boot_pressed_event_active = false;
+
+    const uint32_t press_ms = now - s_app.boot_press_start_ms;
+    if (press_ms <= MAZE_BOOT_SHORT_PRESS_MAX_MS && s_app.playing && !s_app.paused) {
+        show_pause_menu();
+    }
+}
+
+static esp_err_t boot_button_init(void)
+{
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << MAZE_BOOT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const bool pressed = gpio_get_level(MAZE_BOOT_GPIO) == 0;
+    s_app.boot_raw_pressed = pressed;
+    s_app.boot_stable_pressed = pressed;
+    s_app.boot_pressed_event_active = false;
+    s_app.boot_last_change_ms = lv_tick_get();
+    s_app.boot_press_start_ms = s_app.boot_last_change_ms;
+
+    if (s_app.boot_timer == NULL) {
+        s_app.boot_timer = lv_timer_create(boot_button_timer_cb, MAZE_BOOT_POLL_MS, NULL);
+    }
+    return s_app.boot_timer != NULL ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 static bool point_inside_safe_screen(float x, float y, float margin)
@@ -1503,6 +1590,10 @@ static void game_timer_cb(lv_timer_t *timer)
     if (!s_app.playing || s_app.ball_obj == NULL) {
         return;
     }
+    if (s_app.paused) {
+        s_app.last_tick_ms = lv_tick_get();
+        return;
+    }
 
     const uint32_t now = lv_tick_get();
     uint32_t elapsed_ms = now - s_app.last_tick_ms;
@@ -1532,6 +1623,137 @@ static void game_timer_cb(lv_timer_t *timer)
     if (check_win()) {
         show_victory();
     }
+}
+
+static void close_pause_overlay(void)
+{
+    if (s_app.pause_overlay != NULL) {
+        lv_obj_delete(s_app.pause_overlay);
+        s_app.pause_overlay = NULL;
+        s_app.pause_card = NULL;
+        s_app.pause_confirm_card = NULL;
+    }
+}
+
+static lv_obj_t *create_overlay_card(lv_obj_t *parent, int height)
+{
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_set_size(card, s_app.screen_w - 56, height);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x0f172a), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x38bdf8), LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 28, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(card);
+    return card;
+}
+
+static void show_pause_menu(void)
+{
+    if (!s_app.playing || s_app.paused) {
+        return;
+    }
+
+    s_app.paused = true;
+    s_app.ball.vx = 0.0f;
+    s_app.ball.vy = 0.0f;
+    s_app.last_tick_ms = lv_tick_get();
+
+    s_app.pause_overlay = lv_obj_create(s_app.root);
+    lv_obj_set_size(s_app.pause_overlay, s_app.screen_w, s_app.screen_h);
+    lv_obj_set_pos(s_app.pause_overlay, 0, 0);
+    lv_obj_set_style_bg_color(s_app.pause_overlay, lv_color_hex(0x020617), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_app.pause_overlay, LV_OPA_60, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_app.pause_overlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_app.pause_overlay, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_app.pause_overlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(s_app.pause_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_app.pause_card = create_overlay_card(s_app.pause_overlay, 224);
+
+    lv_obj_t *title = lv_label_create(s_app.pause_card);
+    lv_label_set_text(title, "Pausa");
+    style_label(title, lv_color_hex(0xf8fafc));
+#if LV_FONT_MONTSERRAT_28
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, LV_PART_MAIN);
+#endif
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 28);
+
+    lv_obj_t *resume = create_button(s_app.pause_card, "Volver al juego", 220, 54,
+                                     resume_game_clicked, NULL);
+    lv_obj_align(resume, LV_ALIGN_TOP_MID, 0, 86);
+
+    lv_obj_t *exit = create_button(s_app.pause_card, "Salir", 160, 46, request_exit_clicked, NULL);
+    lv_obj_set_style_bg_color(exit, lv_color_hex(0x9f1239), LV_PART_MAIN);
+    lv_obj_align(exit, LV_ALIGN_TOP_MID, 0, 152);
+}
+
+static void show_exit_confirmation(void)
+{
+    if (s_app.pause_overlay == NULL || s_app.pause_confirm_card != NULL) {
+        return;
+    }
+    if (s_app.pause_card != NULL) {
+        lv_obj_add_flag(s_app.pause_card, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    s_app.pause_confirm_card = create_overlay_card(s_app.pause_overlay, 238);
+
+    lv_obj_t *title = lv_label_create(s_app.pause_confirm_card);
+    lv_label_set_text(title, "Seguro que quieres salir?");
+    style_label(title, lv_color_hex(0xf8fafc));
+#if LV_FONT_MONTSERRAT_20
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, LV_PART_MAIN);
+#endif
+    lv_obj_set_width(title, s_app.screen_w - 92);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 34);
+
+    lv_obj_t *cancel = create_button(s_app.pause_confirm_card, "Cancelar", 180, 50,
+                                     cancel_exit_clicked, NULL);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x334155), LV_PART_MAIN);
+    lv_obj_align(cancel, LV_ALIGN_TOP_MID, 0, 96);
+
+    lv_obj_t *exit = create_button(s_app.pause_confirm_card, "Salir", 160, 46,
+                                   confirm_exit_clicked, NULL);
+    lv_obj_set_style_bg_color(exit, lv_color_hex(0x9f1239), LV_PART_MAIN);
+    lv_obj_align(exit, LV_ALIGN_TOP_MID, 0, 162);
+}
+
+static void resume_game_clicked(lv_event_t *event)
+{
+    (void)event;
+    close_pause_overlay();
+    s_app.paused = false;
+    s_app.ball.vx = 0.0f;
+    s_app.ball.vy = 0.0f;
+    s_app.last_tick_ms = lv_tick_get();
+}
+
+static void request_exit_clicked(lv_event_t *event)
+{
+    (void)event;
+    show_exit_confirmation();
+}
+
+static void cancel_exit_clicked(lv_event_t *event)
+{
+    (void)event;
+    if (s_app.pause_confirm_card != NULL) {
+        lv_obj_delete(s_app.pause_confirm_card);
+        s_app.pause_confirm_card = NULL;
+    }
+    if (s_app.pause_card != NULL) {
+        lv_obj_clear_flag(s_app.pause_card, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void confirm_exit_clicked(lv_event_t *event)
+{
+    (void)event;
+    s_app.paused = false;
+    show_mode_menu();
 }
 
 static void normal_mode_clicked(lv_event_t *event)
@@ -1828,6 +2050,11 @@ esp_err_t maze_game_start(void)
     s_app.screen_h = (int)lv_display_get_vertical_resolution(display);
     if (s_app.screen_w <= 0 || s_app.screen_h <= 0) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t boot_err = boot_button_init();
+    if (boot_err != ESP_OK) {
+        ESP_LOGW(TAG, "BOOT button unavailable: %s", esp_err_to_name(boot_err));
     }
 
     ESP_LOGI(TAG, "Starting maze game on %dx%d", s_app.screen_w, s_app.screen_h);
