@@ -23,3 +23,6 @@ compile_commands.json
 
 # Agent skills are installed locally from skills-lock.json
 .agents/
+
+# Local editor config (ESP-IDF extension writes absolute paths here)
+.vscode/
