@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "main.c"
     INCLUDE_DIRS "."
-    REQUIRES imu_service maze_game
+    REQUIRES watch_board maze_game
 )

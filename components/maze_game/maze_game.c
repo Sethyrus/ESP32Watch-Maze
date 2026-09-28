@@ -7,11 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "imu_service.h"
 #include "lvgl.h"
+#include "watch_buttons.h"
 
 static const char *TAG = "maze_game";
 
@@ -21,7 +21,6 @@ static const char *TAG = "maze_game";
 #define MAZE_ADVENTURE_VISIBLE_COLS 12
 #define MAZE_ADVENTURE_VISIBLE_ROWS 15
 #define MAZE_WALL_POOL_OBJECTS 384
-#define MAZE_BOOT_GPIO GPIO_NUM_0
 #define MAZE_BOOT_POLL_MS 25
 #define MAZE_BOOT_DEBOUNCE_MS 40
 #define MAZE_BOOT_SHORT_PRESS_MAX_MS 700
@@ -384,7 +383,7 @@ static void boot_button_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     const uint32_t now = lv_tick_get();
-    const bool pressed = gpio_get_level(MAZE_BOOT_GPIO) == 0;
+    const bool pressed = watch_boot_button_is_pressed();
 
     if (pressed != s_app.boot_raw_pressed) {
         s_app.boot_raw_pressed = pressed;
@@ -417,19 +416,12 @@ static void boot_button_timer_cb(lv_timer_t *timer)
 
 static esp_err_t boot_button_init(void)
 {
-    gpio_config_t io_conf = {
-        .pin_bit_mask = 1ULL << MAZE_BOOT_GPIO,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    esp_err_t err = gpio_config(&io_conf);
+    esp_err_t err = watch_boot_button_init();
     if (err != ESP_OK) {
         return err;
     }
 
-    const bool pressed = gpio_get_level(MAZE_BOOT_GPIO) == 0;
+    const bool pressed = watch_boot_button_is_pressed();
     s_app.boot_raw_pressed = pressed;
     s_app.boot_stable_pressed = pressed;
     s_app.boot_pressed_event_active = false;
