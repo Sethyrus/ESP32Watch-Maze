@@ -7,7 +7,7 @@
 #include "lvgl.h"
 #include "maze_game.h"
 
-static const char *TAG = "ESP32S3Watch";
+static const char *TAG = "ESP32WatchMaze";
 
 static void create_calibration_ui(void)
 {
