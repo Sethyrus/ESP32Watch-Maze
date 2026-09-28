@@ -1,43 +1,21 @@
 # AGENTS.md
 
 ## Project Shape
-- This is an ESP-IDF C firmware project named `ESP32S3Watch`; the app entrypoint is `app_main()` in `main/main.c`.
-- Target hardware is Waveshare `ESP32-S3-Touch-AMOLED-2.06` with ESP32-S3R8, AMOLED 410x502 QSPI, FT3168 touch, QMI8658 IMU, PCF85063 RTC, AXP2101 PMU, ES8311 speaker, ES7210 dual-mic ADC, and microSD.
-- Baseline stack is `ESP-IDF 5.5.4 + LVGL 9 + waveshare/esp32_s3_touch_amoled_2_06` BSP. Do not migrate to ESP-IDF 6.x or ESP-Brookesia unless explicitly requested.
-- Keep `main` small. Add new `main` sources in `main/CMakeLists.txt`, or create ESP-IDF components for reusable code.
-- Durable project config lives in `sdkconfig.defaults`, `partitions.csv`, and component manifests. `sdkconfig`, `build/`, and `managed_components/` are generated/local.
+- ESP-IDF C firmware `ESP32WatchMaze`: IMU-controlled maze game. Entry point is `app_main()` in `main/main.c`; game in `components/maze_game/`.
+- Target hardware is Waveshare `ESP32-S3-Touch-AMOLED-2.06` (ESP32-S3R8, AMOLED 410x502 QSPI, FT3168 touch, QMI8658 IMU, AXP2101 PMU).
+- Stack: `ESP-IDF 5.5.4 + LVGL 9 + waveshare/esp32_s3_touch_amoled_2_06` BSP + `watch_board` from ESP32Watch-core. Do not migrate to ESP-IDF 6.x or ESP-Brookesia unless explicitly requested.
+- IMU (`imu_service.h`) and BOOT button (`watch_buttons.h`) come from `watch_board` (https://github.com/Sethyrus/ESP32Watch-core), pinned by tag in `main/idf_component.yml`. Fix hardware-level bugs there, not with local copies.
+- Game design and decisions: `docs/MAZE_DESIGN.md`. Hardware docs: ESP32Watch-core `docs/`.
+- Durable config lives in `sdkconfig.defaults`, `partitions.csv`, component manifests and `dependencies.lock`. `sdkconfig`, `build/` and `managed_components/` are generated.
 
 ## Commands
-- Source ESP-IDF before running IDF commands in a plain shell: `source "/Users/alex/.espressif/v5.5.4/esp-idf/export.sh"`.
-- First setup or fresh config: `idf.py set-target esp32s3`.
-- Build/primary verification: `idf.py build`.
-- Flash and monitor with the checked-in VS Code UART setting when applicable: `idf.py -p /dev/tty.usbmodem21301 flash monitor`.
-- No repo-local test, lint, or format targets are configured; do not invent npm/PlatformIO/pytest commands for this repo.
+- Source ESP-IDF: `source "$HOME/.espressif/v5.5.4/esp-idf/export.sh"`.
+- First setup: `idf.py set-target esp32s3`. Verification: `idf.py build`.
+- Flash and monitor: `idf.py -p /dev/tty.usbmodem21301 flash monitor`.
+- No test, lint or format targets are configured; do not invent them.
 
-## Generated And Local Files
-- `build/` and `sdkconfig` are git-ignored. Treat them as local/generated state, not durable project source.
-- If a Kconfig change must survive a clean checkout, add/update `sdkconfig.defaults` or intentionally change the tracking policy; editing only `sdkconfig` is not enough.
-- `build/compile_commands.json` is the clangd source configured by `.vscode/settings.json`; regenerate it with `idf.py build` after source or config changes.
-
-## Hardware And BSP Notes
-- Prefer the Waveshare BSP for display/touch/brightness/audio/SD/I2C. It already handles the QSPI display init, LVGL port and touch input device.
-- The wiki and Arduino examples mention display controller `CO5300`, but the official ESP-IDF BSP uses `waveshare/esp_lcd_sh8601`. Treat the BSP as source of truth for ESP-IDF work.
-- Display brightness is controlled by command `0x51` over QSPI (`0x00..0xFF`), exposed as `bsp_display_brightness_set(percent)`.
-- LVGL is not thread-safe. Wrap all `lv_*` calls made outside LVGL callbacks/tasks with `bsp_display_lock()` and `bsp_display_unlock()`.
-- The BSP declares no IMU or button support. Use `waveshare/qmi8658` for IMU and custom code/components for BOOT GPIO0, RTC PCF85063, and PMU AXP2101.
-- Reuse `bsp_i2c_get_handle()` for devices on the shared I2C bus after display/touch startup; do not create a second master bus on the same port by copying standalone examples.
-- Do not assume PWR is a direct ESP32 GPIO. The schematic routes it through AXP2101 `PWRON`, the wiki says it is readable through `EXIO6` high when pressed, and holding it around 6s powers off the board.
-- Type-C flashing/debug uses native ESP32-S3 USB with auto-download; BOOT GPIO0 is the recovery path when USB/firmware state blocks normal flashing.
-- For microSD in ESP-IDF use BSP SDMMC 1-bit (`CLK GPIO2`, `CMD GPIO1`, `D0 GPIO3`). `GPIO17` appears only in Arduino SPI-style SD examples.
-- QMI8658 default accel units are milli-g. If using screen physics, normalize and map axes as `screen_x = -accelY / 1000.0f`, `screen_y = accelX / 1000.0f` unless m/s2 mode is enabled.
-- Schematic-only pins not wrapped by BSP include motor `GPIO18`, QMI INT `GPIO21`, RTC INT `GPIO39`, LCD TE `GPIO13`, `SYS_OUT/GPIO10`, and external pads; verify before use.
-- For I2C scans, ES7210 should appear as `0x40` 7-bit even though `esp_codec_dev` uses an `0x80` default-address macro.
-
-## Documentation Map
-- `README.md`: project overview and quick start.
-- `docs/HARDWARE.md`: board parts, pins, buses, sensors, APIs and addresses.
-- `docs/SETUP.md`: ESP-IDF 5.5.4 setup, build/flash, config files and dependencies.
-- `docs/GOTCHAS.md`: known pitfalls and implementation cautions.
-- `docs/ARCHITECTURE.md`: LVGL+BSP decision, component layout and Brookesia criteria.
-- `docs/BRINGUP.md`: hardware validation checklist before building apps.
-- `docs/SOURCES.md`: official links, datasheets, examples and local references.
+## Critical Hardware Notes
+- LVGL is not thread-safe: wrap `lv_*` calls outside LVGL callbacks/tasks with `bsp_display_lock()` / `bsp_display_unlock()`.
+- Reuse `bsp_i2c_get_handle()` for devices on the shared I2C bus; never create a second master bus on the same port.
+- QMI8658 accel is milli-g; screen axes are `screen_x = -accelY / 1000`, `screen_y = accelX / 1000` (already done by `imu_service`).
+- BOOT is GPIO0, active low. PWR is not a GPIO (AXP2101 `PWRON`); holding it ~6 s powers off the board.

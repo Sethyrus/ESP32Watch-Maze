@@ -5,15 +5,13 @@
     "board/esp32s3-builtin.cfg"
   ],
   "idf.port": "/dev/tty.usbmodem21301",
-  "idf.currentSetup": "/Users/alex/.espressif/v5.5.4/esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
-  "clangd.path": "/Users/alex/.espressif/tools/esp-clang/esp-19.1.2_20250312/esp-clang/bin/clangd",
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=/Users/alex/Proyectos/Alex/ESP32/ESP32S3Watch/ESP32S3Watch/build"
+    "--compile-commands-dir=${workspaceFolder}/build"
   ],
   "idf.flashType": "UART"
 }

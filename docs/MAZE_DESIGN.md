@@ -1,6 +1,6 @@
 # Maze Game Design
 
-Documento de diseno para la rama `app/maze`. Define el juego de laberinto con bola controlada por IMU, el modo normal inicial y las decisiones que deben permitir anadir modos mas grandes sin reescribir el nucleo.
+Documento de diseno de ESP32Watch-Maze. Define el juego de laberinto con bola controlada por IMU, el modo normal inicial y las decisiones que deben permitir anadir modos mas grandes sin reescribir el nucleo.
 
 ## Objetivo
 
@@ -22,7 +22,7 @@ El primer modo implementado sera `Normal`. El menu debe estar preparado para lis
 - Display: AMOLED `410 x 502`, QSPI, BSP Waveshare.
 - IMU: `QMI8658` por I2C, usando `bsp_i2c_get_handle()` despues de arrancar el BSP.
 - Framework: `ESP-IDF 5.5.4 + LVGL 9 + waveshare/esp32_s3_touch_amoled_2_06`.
-- No usar ESP-Brookesia en esta rama salvo cambio explicito de direccion.
+- No usar ESP-Brookesia en este proyecto salvo cambio explicito de direccion.
 
 Reglas criticas:
 
@@ -468,15 +468,10 @@ Este patron ya fue probado parcialmente en el proyecto de referencia y es mejor 
 
 ## Arquitectura Propuesta
 
-Estructura inicial recomendada:
+Estructura inicial recomendada (`imu_service` vive en el componente `watch_board` de [ESP32Watch-core](https://github.com/Sethyrus/ESP32Watch-core), que se descarga como dependencia):
 
 ```text
 components/
-|-- imu_service/
-|   |-- include/imu_service.h
-|   |-- imu_service.c
-|   |-- CMakeLists.txt
-|   `-- idf_component.yml
 |-- maze_game/
 |   |-- include/maze_game.h
 |   |-- maze_app.c
@@ -494,13 +489,12 @@ Responsabilidades:
 | Modulo | Responsabilidad |
 | --- | --- |
 | `main.c` | Arrancar BSP/display, brillo y app |
-| `imu_service` | QMI8658, calibracion, filtro, snapshot de aceleracion |
+| `imu_service` (core) | QMI8658, calibracion, filtro, snapshot de aceleracion |
 | `maze_generator` | Crear tablero perfecto y validarlo |
 | `maze_physics` | Bola, integracion, colisiones, victoria |
 | `maze_render_lvgl` | Objetos LVGL y actualizaciones visuales |
 | `maze_app` | Estado de pantallas, menu, dificultad, timers |
 
-Si se quiere avanzar mas rapido, `imu_service` puede empezar dentro de `maze_game`, pero el limite debe estar claro para extraerlo despues.
 
 ## Estado De App
 
@@ -588,7 +582,7 @@ Validacion visual:
 Verificacion minima antes de dar por cerrada una iteracion:
 
 ```sh
-source "/Users/alex/.espressif/v5.5.4/esp-idf/export.sh"
+source "$HOME/.espressif/v5.5.4/esp-idf/export.sh"
 idf.py build
 ```
 
@@ -615,7 +609,7 @@ La validacion final de controles, esquinas y rendimiento requiere hardware real.
 5. Anadir fisica y colisiones con bola.
 6. Anadir victoria, replay y vuelta a menu.
 7. Ajustar constantes en hardware.
-8. Documentar resultados en `docs/BRINGUP.md` o notas de app.
+8. Documentar resultados en este documento o, si son de hardware, en `docs/BRINGUP.md` de ESP32Watch-core.
 
 ## Criterios Para Futuras Extensiones
 
