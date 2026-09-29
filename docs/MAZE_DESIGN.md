@@ -149,9 +149,11 @@ Factores iniciales:
 
 | Dificultad | `ball_radius_factor` | `branch_select_percent` | `min_solution_ratio` |
 | --- | ---: | ---: | ---: |
-| Facil | `0.30` | `25` | `0.35` |
-| Normal | `0.28` | `40` | `0.45` |
-| Dificil | `0.25` | `55` | `0.55` |
+| Facil | `0.30` | `25` | `1.10` |
+| Normal | `0.28` | `40` | `1.00` |
+| Dificil | `0.25` | `55` | `1.00` |
+
+`min_solution_ratio` se multiplica por `rows + cols` para obtener la longitud minima del camino de salida a meta (en celdas).
 
 `branch_select_percent` controla el algoritmo Growing Tree. Valores altos eligen mas celdas aleatorias del frente activo y tienden a generar mas bifurcaciones; valores bajos se comportan mas como DFS y producen pasillos mas largos.
 

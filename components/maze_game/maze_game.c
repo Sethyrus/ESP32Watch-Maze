@@ -156,7 +156,7 @@ static const maze_difficulty_config_t NORMAL_DIFFICULTIES[] = {
         .rows = 11,
         .ball_radius_factor = 0.30f,
         .branch_select_percent = 25,
-        .min_solution_ratio = 0.35f,
+        .min_solution_ratio = 1.10f,
     },
     [MAZE_DIFFICULTY_NORMAL] = {
         .name = "Normal",
@@ -164,7 +164,7 @@ static const maze_difficulty_config_t NORMAL_DIFFICULTIES[] = {
         .rows = 15,
         .ball_radius_factor = 0.28f,
         .branch_select_percent = 40,
-        .min_solution_ratio = 0.45f,
+        .min_solution_ratio = 1.00f,
     },
     [MAZE_DIFFICULTY_HARD] = {
         .name = "Dificil",
@@ -172,7 +172,7 @@ static const maze_difficulty_config_t NORMAL_DIFFICULTIES[] = {
         .rows = 18,
         .ball_radius_factor = 0.25f,
         .branch_select_percent = 55,
-        .min_solution_ratio = 0.55f,
+        .min_solution_ratio = 1.00f,
     },
 };
 
@@ -752,9 +752,7 @@ static bool validate_maze(const maze_difficulty_config_t *cfg, int *out_solution
     }
 
     const int solution_len = distance[goal_index];
-    const int min_solution = s_app.mode == MAZE_MODE_ADVENTURE
-                                 ? (int)((float)(s_app.rows + s_app.cols) * cfg->min_solution_ratio)
-                                 : (int)((float)valid_count * cfg->min_solution_ratio);
+    const int min_solution = (int)((float)(s_app.rows + s_app.cols) * cfg->min_solution_ratio);
     const int min_dead_ends = valid_count / 8;
 
     if (out_solution_len != NULL) {
