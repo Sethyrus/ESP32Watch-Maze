@@ -19,3 +19,4 @@
 - Reuse `bsp_i2c_get_handle()` for devices on the shared I2C bus; never create a second master bus on the same port.
 - QMI8658 accel is milli-g; screen axes are `screen_x = -accelY / 1000`, `screen_y = accelX / 1000` (already done by `imu_service`).
 - BOOT is GPIO0, active low. PWR is not a GPIO (AXP2101 `PWRON`); holding it ~6 s powers off the board.
+- Button convention: BOOT = accept/primary action, PWR short press = back/menu. See "Convencion De Botones" in core `docs/ARCHITECTURE.md`.

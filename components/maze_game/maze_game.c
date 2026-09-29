@@ -381,7 +381,35 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, int width, in
     return button;
 }
 
-// PWR short press (AXP2101 over I2C) pauses like BOOT; polled slower since each poll is a bus transaction.
+// Button convention (ESP32Watch-core docs/ARCHITECTURE.md): BOOT = accept, PWR = back/menu.
+// Maze has no primary action while playing, so BOOT only acts inside the pause overlay.
+static void handle_boot_short_press(void)
+{
+    if (!s_app.playing || !s_app.paused) {
+        return;
+    }
+    if (s_app.pause_confirm_card != NULL) {
+        confirm_exit_clicked(NULL);
+    } else {
+        resume_game_clicked(NULL);
+    }
+}
+
+static void handle_pwr_short_press(void)
+{
+    if (!s_app.playing) {
+        return;
+    }
+    if (!s_app.paused) {
+        show_pause_menu();
+    } else if (s_app.pause_confirm_card != NULL) {
+        cancel_exit_clicked(NULL);
+    } else {
+        resume_game_clicked(NULL);
+    }
+}
+
+// PWR short press comes from the AXP2101 over I2C; polled slower since each poll is a bus transaction.
 static void poll_pwr_key(uint32_t now)
 {
     if (!watch_pwr_key_is_available() || now - s_app.pwr_last_poll_ms < MAZE_PWR_POLL_MS) {
@@ -391,8 +419,8 @@ static void poll_pwr_key(uint32_t now)
 
     bool pressed = false;
     (void)watch_pwr_key_take_short_press(&pressed);
-    if (pressed && s_app.playing && !s_app.paused) {
-        show_pause_menu();
+    if (pressed) {
+        handle_pwr_short_press();
     }
 }
 
@@ -428,8 +456,8 @@ static void boot_button_timer_cb(lv_timer_t *timer)
     s_app.boot_pressed_event_active = false;
 
     const uint32_t press_ms = now - s_app.boot_press_start_ms;
-    if (press_ms <= MAZE_BOOT_SHORT_PRESS_MAX_MS && s_app.playing && !s_app.paused) {
-        show_pause_menu();
+    if (press_ms <= MAZE_BOOT_SHORT_PRESS_MAX_MS) {
+        handle_boot_short_press();
     }
 }
 
@@ -1916,7 +1944,7 @@ static void show_difficulty_menu(void)
     lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
-// Error message plus a way back to the menu (BOOT/PWR only act while playing).
+// Error message plus a way back to the menu (BOOT/PWR only act while playing or paused).
 static void show_start_error(const char *message)
 {
     lv_obj_t *error = lv_label_create(s_app.root);

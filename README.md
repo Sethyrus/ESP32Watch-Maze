@@ -13,7 +13,8 @@ Juego de laberinto para la Waveshare **ESP32-S3-Touch-AMOLED-2.06**: una bola qu
 | --- | --- |
 | Inclinar el reloj | Mover la bola |
 | Tactil | Menus, `Jugar de nuevo`, `Salir` |
-| `BOOT` o `PWR` (pulsacion corta) | Pausa durante la partida |
+| `PWR` (pulsacion corta) | Pausa; en la pausa, volver al juego; en "Salir?", cancelar |
+| `BOOT` (pulsacion corta) | En la pausa, volver al juego; en "Salir?", confirmar salida |
 
 Mantener el reloj quieto durante la calibracion inicial.
 
