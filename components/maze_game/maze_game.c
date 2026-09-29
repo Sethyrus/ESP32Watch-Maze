@@ -24,6 +24,7 @@ static const char *TAG = "maze_game";
 #define MAZE_BOOT_POLL_MS 25
 #define MAZE_BOOT_DEBOUNCE_MS 40
 #define MAZE_BOOT_SHORT_PRESS_MAX_MS 700
+#define MAZE_PWR_POLL_MS 100
 
 #define MAZE_WALL_TOP    (1U << 0)
 #define MAZE_WALL_RIGHT  (1U << 1)
@@ -139,6 +140,7 @@ typedef struct {
     bool boot_pressed_event_active;
     uint32_t boot_last_change_ms;
     uint32_t boot_press_start_ms;
+    uint32_t pwr_last_poll_ms;
     maze_cell_t cells[MAZE_MAX_ROWS][MAZE_MAX_COLS];
     int16_t work_rows[MAZE_MAX_CELLS];
     int16_t work_cols[MAZE_MAX_CELLS];
@@ -379,10 +381,27 @@ static lv_obj_t *create_button(lv_obj_t *parent, const char *text, int width, in
     return button;
 }
 
+// PWR short press (AXP2101 over I2C) pauses like BOOT; polled slower since each poll is a bus transaction.
+static void poll_pwr_key(uint32_t now)
+{
+    if (!watch_pwr_key_is_available() || now - s_app.pwr_last_poll_ms < MAZE_PWR_POLL_MS) {
+        return;
+    }
+    s_app.pwr_last_poll_ms = now;
+
+    bool pressed = false;
+    (void)watch_pwr_key_take_short_press(&pressed);
+    if (pressed && s_app.playing && !s_app.paused) {
+        show_pause_menu();
+    }
+}
+
 static void boot_button_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     const uint32_t now = lv_tick_get();
+    poll_pwr_key(now);
+
     const bool pressed = watch_boot_button_is_pressed();
 
     if (pressed != s_app.boot_raw_pressed) {
@@ -828,7 +847,8 @@ static bool generate_maze(void)
         int solution_len = 0;
         int dead_ends = 0;
         const bool valid = validate_maze(cfg, &solution_len, &dead_ends);
-        ESP_LOGI(TAG,
+        // Failed attempts at debug level: each UART line costs ~12 ms on the LVGL task.
+        ESP_LOG_LEVEL_LOCAL(valid ? ESP_LOG_INFO : ESP_LOG_DEBUG, TAG,
                  "maze attempt=%d mode=%s diff=%s size=%dx%d seed=%" PRIu32 " start=(%d,%d) goal=(%d,%d) path=%d dead=%d valid=%d",
                  attempt + 1, current_mode_name(), cfg->name, s_app.cols, s_app.rows, s_app.seed,
                  s_app.start_row, s_app.start_col, s_app.goal_row, s_app.goal_col, solution_len,
@@ -1896,16 +1916,26 @@ static void show_difficulty_menu(void)
     lv_obj_align(back, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
+// Error message plus a way back to the menu (BOOT/PWR only act while playing).
+static void show_start_error(const char *message)
+{
+    lv_obj_t *error = lv_label_create(s_app.root);
+    lv_label_set_text(error, message);
+    style_label(error, lv_color_hex(0xfca5a5));
+    lv_obj_align(error, LV_ALIGN_CENTER, 0, -36);
+
+    lv_obj_t *menu = create_button(s_app.root, "Menu", 160, 46, menu_clicked, NULL);
+    lv_obj_set_style_bg_color(menu, lv_color_hex(0x334155), LV_PART_MAIN);
+    lv_obj_align(menu, LV_ALIGN_CENTER, 0, 36);
+}
+
 static void start_game(maze_difficulty_t difficulty)
 {
     s_app.difficulty = difficulty;
     clear_screen();
 
     if (!generate_maze()) {
-        lv_obj_t *error = lv_label_create(s_app.root);
-        lv_label_set_text(error, "No se pudo generar el laberinto");
-        style_label(error, lv_color_hex(0xfca5a5));
-        lv_obj_center(error);
+        show_start_error("No se pudo generar el laberinto");
         return;
     }
 
@@ -2013,6 +2043,7 @@ static void start_game(maze_difficulty_t difficulty)
     if (s_app.timer == NULL) {
         ESP_LOGE(TAG, "Failed to create game timer");
         s_app.playing = false;
+        show_start_error("No se pudo iniciar la partida");
         return;
     }
     s_app.last_tick_ms = lv_tick_get();
@@ -2063,6 +2094,11 @@ esp_err_t maze_game_start(void)
     s_app.screen_h = (int)lv_display_get_vertical_resolution(display);
     if (s_app.screen_w <= 0 || s_app.screen_h <= 0) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t pwr_err = watch_pwr_key_init();
+    if (pwr_err != ESP_OK) {
+        ESP_LOGW(TAG, "PWR button unavailable: %s", esp_err_to_name(pwr_err));
     }
 
     const esp_err_t boot_err = boot_button_init();

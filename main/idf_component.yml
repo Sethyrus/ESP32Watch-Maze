@@ -7,4 +7,4 @@ dependencies:
   watch_board:
     git: https://github.com/Sethyrus/ESP32Watch-core.git
     path: components/watch_board
-    version: v0.1.0
+    version: v0.1.1

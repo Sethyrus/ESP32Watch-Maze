@@ -4,14 +4,14 @@
 - ESP-IDF C firmware `ESP32WatchMaze`: IMU-controlled maze game. Entry point is `app_main()` in `main/main.c`; game in `components/maze_game/`.
 - Target hardware is Waveshare `ESP32-S3-Touch-AMOLED-2.06` (ESP32-S3R8, AMOLED 410x502 QSPI, FT3168 touch, QMI8658 IMU, AXP2101 PMU).
 - Stack: `ESP-IDF 5.5.4 + LVGL 9 + waveshare/esp32_s3_touch_amoled_2_06` BSP + `watch_board` from ESP32Watch-core. Do not migrate to ESP-IDF 6.x or ESP-Brookesia unless explicitly requested.
-- IMU (`imu_service.h`) and BOOT button (`watch_buttons.h`) come from `watch_board` (https://github.com/Sethyrus/ESP32Watch-core), pinned by tag in `main/idf_component.yml`. Fix hardware-level bugs there, not with local copies.
+- IMU (`imu_service.h`) and BOOT/PWR buttons (`watch_buttons.h`) come from `watch_board` (https://github.com/Sethyrus/ESP32Watch-core), pinned by tag in `main/idf_component.yml`. Fix hardware-level bugs there, not with local copies.
 - Game design and decisions: `docs/MAZE_DESIGN.md`. Hardware docs: ESP32Watch-core `docs/`.
 - Durable config lives in `sdkconfig.defaults`, `partitions.csv`, component manifests and `dependencies.lock`. `sdkconfig`, `build/` and `managed_components/` are generated.
 
 ## Commands
 - Source ESP-IDF: `source "$HOME/.espressif/v5.5.4/esp-idf/export.sh"`.
 - First setup: `idf.py set-target esp32s3`. Verification: `idf.py build`.
-- Flash and monitor: `idf.py -p /dev/tty.usbmodem21301 flash monitor`.
+- Flash and monitor: `idf.py -p <PORT> flash monitor` (macOS port looks like `/dev/tty.usbmodem*` and changes with the USB socket; `idf.py` auto-detects it if `-p` is omitted).
 - No test, lint or format targets are configured; do not invent them.
 
 ## Critical Hardware Notes

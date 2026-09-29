@@ -13,7 +13,7 @@ Juego de laberinto para la Waveshare **ESP32-S3-Touch-AMOLED-2.06**: una bola qu
 | --- | --- |
 | Inclinar el reloj | Mover la bola |
 | Tactil | Menus, `Jugar de nuevo`, `Salir` |
-| `BOOT` (pulsacion corta) | Pausa durante la partida |
+| `BOOT` o `PWR` (pulsacion corta) | Pausa durante la partida |
 
 Mantener el reloj quieto durante la calibracion inicial.
 
@@ -25,7 +25,7 @@ Requiere `ESP-IDF 5.5.4` (ver [SETUP](https://github.com/Sethyrus/ESP32Watch-cor
 source "$HOME/.espressif/v5.5.4/esp-idf/export.sh"
 idf.py set-target esp32s3
 idf.py build
-idf.py -p /dev/tty.usbmodem21301 flash monitor
+idf.py -p <PORT> flash monitor   # p. ej. /dev/tty.usbmodem1101; sin -p lo autodetecta
 ```
 
 El puerto puede variar. Si el firmware bloquea el USB, mantener `BOOT` al conectar para entrar en modo descarga.
@@ -38,7 +38,7 @@ El puerto puede variar. Si el firmware bloquea el USB, mantener `BOOT` al conect
 | `components/maze_game/` | Generacion, fisica, render LVGL y menus. |
 | `docs/MAZE_DESIGN.md` | Diseno del juego y decisiones. |
 
-La IMU y el boton `BOOT` vienen del componente `watch_board` de [ESP32Watch-core](https://github.com/Sethyrus/ESP32Watch-core), declarado en `main/idf_component.yml` y fijado en `dependencies.lock`. La documentacion de hardware de la placa esta alli.
+La IMU y los botones `BOOT`/`PWR` vienen del componente `watch_board` de [ESP32Watch-core](https://github.com/Sethyrus/ESP32Watch-core), declarado en `main/idf_component.yml` y fijado en `dependencies.lock`. La documentacion de hardware de la placa esta alli.
 
 ## Licencia
 
