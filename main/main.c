@@ -6,6 +6,7 @@
 #include "imu_service.h"
 #include "lvgl.h"
 #include "maze_game.h"
+#include "watch_launcher.h"
 
 static const char *TAG = "ESP32WatchMaze";
 
@@ -35,6 +36,9 @@ static void create_calibration_ui(void)
 
 void app_main(void)
 {
+    // Launcher mode: any reset from here on returns to the launcher.
+    watch_launcher_boot_once();
+
     ESP_LOGI(TAG, "Starting maze game");
 
     lv_display_t *display = bsp_display_start();

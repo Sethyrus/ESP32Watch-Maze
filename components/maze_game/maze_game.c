@@ -12,6 +12,7 @@
 #include "imu_service.h"
 #include "lvgl.h"
 #include "watch_buttons.h"
+#include "watch_launcher.h"
 
 static const char *TAG = "maze_game";
 
@@ -133,6 +134,7 @@ typedef struct {
     int last_world_offset_y;
     bool playing;
     bool paused;
+    bool at_mode_menu; // root screen: PWR returns to the launcher
     bool hint_enabled;
     bool hole_hidden;
     bool boot_raw_pressed;
@@ -319,6 +321,8 @@ static void clear_screen(void)
 {
     stop_timer();
 
+    s_app.at_mode_menu = false;
+
     s_app.ball_obj = NULL;
     s_app.hole_obj = NULL;
     s_app.overlay = NULL;
@@ -398,6 +402,10 @@ static void handle_boot_short_press(void)
 static void handle_pwr_short_press(void)
 {
     if (!s_app.playing) {
+        // PWR at the app root goes back to the launcher (when started from it).
+        if (s_app.at_mode_menu && watch_launcher_is_available()) {
+            watch_launcher_exit();
+        }
         return;
     }
     if (!s_app.paused) {
@@ -1848,6 +1856,12 @@ static void replay_clicked(lv_event_t *event)
     start_game(s_app.difficulty);
 }
 
+static void launcher_exit_clicked(lv_event_t *event)
+{
+    (void)event;
+    watch_launcher_exit();
+}
+
 static void calibrate_clicked(lv_event_t *event)
 {
     (void)event;
@@ -1901,9 +1915,20 @@ static void show_mode_menu(void)
     lv_obj_t *adventure = create_button(s_app.root, "Modo Aventura", 250, 58, adventure_mode_clicked, NULL);
     lv_obj_align(adventure, LV_ALIGN_CENTER, 0, 28);
 
+    s_app.at_mode_menu = true;
+
     lv_obj_t *calibrate = create_button(s_app.root, "Calibrar", 150, 46, calibrate_clicked, NULL);
     lv_obj_set_style_bg_color(calibrate, lv_color_hex(0x334155), LV_PART_MAIN);
-    lv_obj_align(calibrate, LV_ALIGN_BOTTOM_MID, 0, -42);
+
+    // Started from ESP32Watch-Launcher: offer the way back next to Calibrar.
+    if (watch_launcher_is_available()) {
+        lv_obj_align(calibrate, LV_ALIGN_BOTTOM_MID, -82, -42);
+        lv_obj_t *exit = create_button(s_app.root, "Salir", 150, 46, launcher_exit_clicked, NULL);
+        lv_obj_set_style_bg_color(exit, lv_color_hex(0x334155), LV_PART_MAIN);
+        lv_obj_align(exit, LV_ALIGN_BOTTOM_MID, 82, -42);
+    } else {
+        lv_obj_align(calibrate, LV_ALIGN_BOTTOM_MID, 0, -42);
+    }
 }
 
 static void show_difficulty_menu(void)

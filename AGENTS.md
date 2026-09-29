@@ -20,3 +20,4 @@
 - QMI8658 accel is milli-g; screen axes are `screen_x = -accelY / 1000`, `screen_y = accelX / 1000` (already done by `imu_service`).
 - BOOT is GPIO0, active low. PWR is not a GPIO (AXP2101 `PWRON`); holding it ~6 s powers off the board.
 - Button convention: BOOT = accept/primary action, PWR short press = back/menu. See "Convencion De Botones" in core `docs/ARCHITECTURE.md`.
+- Launcher mode (core `watch_launcher.h`): `app_main` calls `watch_launcher_boot_once()` first. On the mode menu (app root, `at_mode_menu`), `Salir` and PWR call `watch_launcher_exit()`, only when `watch_launcher_is_available()`. `partitions.csv` is a copy of the shared table in ESP32Watch-Launcher; do not change it here alone.
