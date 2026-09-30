@@ -1,11 +1,17 @@
-# ESP32Watch shared layout (launcher mode, WAD in flash). Same offsets in every app repo.
-# factory = launcher; ota_N = one app each (see flash_all.sh); storage = Doom WAD (FAT, read-only).
-# Name,   Type, SubType,  Offset,   Size
-nvs,      data, nvs,      0x9000,   0x6000,
-otadata,  data, ota,      0xf000,   0x2000,
-phy_init, data, phy,      0x11000,  0x1000,
-factory,  app,  factory,  0x20000,  0x180000,
-ota_0,    app,  ota_0,    0x1a0000, 0x200000,
-ota_1,    app,  ota_1,    0x3a0000, 0x200000,
-ota_2,    app,  ota_2,    0x5a0000, 0x200000,
-storage,  data, fat,      0x7a0000, 0x860000,
+# ESP32Watch shared layout (launcher mode), 32 MB flash. Same offsets in every app repo.
+# factory = launcher; ota_N = one app each (apps.conf). Code stays below 16 MB (32-bit flash
+# addressing for code is experimental in ESP-IDF); storage sits above it and is only read
+# through the partition API (Doom WAD, FAT, read-only), verified on the board.
+# Name,   Type, SubType,  Offset,    Size
+nvs,      data, nvs,      0x9000,    0x6000,
+otadata,  data, ota,      0xf000,    0x2000,
+phy_init, data, phy,      0x11000,   0x1000,
+factory,  app,  factory,  0x20000,   0x180000,
+ota_0,    app,  ota_0,    0x1a0000,  0x200000,
+ota_1,    app,  ota_1,    0x3a0000,  0x200000,
+ota_2,    app,  ota_2,    0x5a0000,  0x200000,
+ota_3,    app,  ota_3,    0x7a0000,  0x200000,
+ota_4,    app,  ota_4,    0x9a0000,  0x200000,
+ota_5,    app,  ota_5,    0xba0000,  0x200000,
+ota_6,    app,  ota_6,    0xda0000,  0x200000,
+storage,  data, fat,      0x1000000, 0x1000000,

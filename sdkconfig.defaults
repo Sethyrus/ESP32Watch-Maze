@@ -1,12 +1,11 @@
 # ESP-IDF 5.5.4 baseline for Waveshare ESP32-S3-Touch-AMOLED-2.06.
 CONFIG_IDF_TARGET="esp32s3"
 
-# Official Waveshare examples use QIO and 16 MB. The wiki and schematic
-# (`GD25Q256EYIGR`) indicate 32 MB; verify with esptool.py flash_id before
-# switching the durable config to 32 MB.
+# The chip is 32 MB (`GD25Q256EYIGR`, verified on the board); the official Waveshare
+# examples use 16 MB. Code must stay below 16 MB: see partitions.csv.
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
 
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
