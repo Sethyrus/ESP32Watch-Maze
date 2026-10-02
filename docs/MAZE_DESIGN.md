@@ -254,7 +254,7 @@ screen_y =  data.accelX / 1000.0f;
 
 Inicializacion recomendada:
 
-- Arrancar display con `bsp_display_start()`.
+- Arrancar display con `watch_display_start()` de core (no `bsp_display_start()`, que registra el panel como RGB; ver core GOTCHAS).
 - Obtener I2C con `bsp_i2c_get_handle()`.
 - Inicializar QMI8658 en `QMI8658_ADDRESS_HIGH`.
 - Usar ODR alto, por ejemplo `500Hz`, aunque la app consuma snapshot a `50Hz`.

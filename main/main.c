@@ -2,10 +2,10 @@
 #include "esp_log.h"
 
 #include "bsp/esp-bsp.h"
-#include "bsp/display.h"
 #include "imu_service.h"
 #include "lvgl.h"
 #include "maze_game.h"
+#include "watch_display.h"
 #include "watch_launcher.h"
 
 static const char *TAG = "ESP32WatchMaze";
@@ -41,16 +41,15 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Starting maze game");
 
-    lv_display_t *display = bsp_display_start();
-    if (display == NULL) {
+    // Not bsp_display_start(): it registers this QSPI panel as RGB (heap overrun, core
+    // docs/GOTCHAS.md). 40 draw-buffer lines, as the BSP config had.
+    watch_display_config_t display_cfg = WATCH_DISPLAY_CONFIG_DEFAULT();
+    display_cfg.buffer_lines = 40;
+    if (watch_display_start(&display_cfg) == NULL) {
         ESP_LOGE(TAG, "Failed to start display");
         return;
     }
-
-    esp_err_t err = bsp_display_brightness_set(80);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to set display brightness: %s", esp_err_to_name(err));
-    }
+    esp_err_t err;
 
     if (!bsp_display_lock(0)) {
         ESP_LOGE(TAG, "Failed to lock LVGL");
